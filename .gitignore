@@ -1,0 +1,30 @@
+# OS
+.DS_Store
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Data
+data/
+*.db
+
+# Node
+node_modules/
+dist/
+.next/
+
+# IDE
+.idea/
+.vscode/
+
+# Cursor
+.cursor/
