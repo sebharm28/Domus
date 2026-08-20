@@ -8,7 +8,7 @@ load_dotenv()
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "domus.db"
-DEFAULT_OPENROUTER_MODEL = "google/gemma-2-9b-it"
+DEFAULT_OPENROUTER_MODEL = "meta-llama/llama-3.2-3b-instruct"
 
 
 @dataclass(frozen=True)

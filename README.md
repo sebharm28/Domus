@@ -58,6 +58,8 @@ src/domus/
   todos.py     # shopping list logic
 data/
   domus.db     # created automatically on first run
+logs/
+  session_*.log  # one conversation log per bot session (not pushed to GitHub)
 ```
 
 Next up: recurring reminders, meal planning, status queries.

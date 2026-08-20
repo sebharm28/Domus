@@ -12,7 +12,38 @@ def format_todo_list(todos: list[db.Todo]) -> str:
     return "\n".join(lines)
 
 
+def handle_intents(intents: list[Intent], db_path: Path, created_by: str) -> str:
+    ordered = sorted(
+        intents,
+        key=lambda intent: 1 if intent.name == "list_todos" else 0,
+    )
+    replies: list[str] = []
+    for intent in ordered:
+        if intent.name == "unknown":
+            continue
+        reply = handle_intent(intent, db_path, created_by)
+        if reply and reply not in replies:
+            replies.append(reply)
+
+    if replies:
+        return "\n".join(replies)
+
+    return (
+        "I didn't understand that yet. Try:\n"
+        "• add milk to the list\n"
+        "• we need butter\n"
+        "• we don't need paper any longer\n"
+        "• what's on the list?"
+    )
+
+
 def handle_intent(intent: Intent, db_path: Path, created_by: str) -> str:
+    if intent.name == "greeting":
+        return "Hi! I'm here — need anything added to the list or checked off?"
+
+    if intent.name == "thanks":
+        return "You're welcome! Happy to help."
+
     if intent.name == "help":
         return (
             "I can manage your shared shopping list:\n"
@@ -47,9 +78,4 @@ def handle_intent(intent: Intent, db_path: Path, created_by: str) -> str:
             return f'I could not find an open item matching "{intent.item}".'
         return f'Removed "{todo.text}" from the list.'
 
-    return (
-        "I didn't understand that yet. Try:\n"
-        "• add milk to the list\n"
-        "• what's on the list?\n"
-        "• check off milk"
-    )
+    return ""

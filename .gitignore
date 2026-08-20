@@ -17,6 +17,9 @@ venv/
 data/
 *.db
 
+# Conversation logs (local NLP training data)
+logs/
+
 # Node
 node_modules/
 dist/
