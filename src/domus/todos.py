@@ -1,15 +1,30 @@
 from pathlib import Path
 
 from domus import db
+from domus.dates import format_due_date
 from domus.intents import Intent
 
 
 def format_todo_list(todos: list[db.Todo]) -> str:
     if not todos:
         return "The list is empty."
-    lines = ["Shopping list:"]
-    lines.extend(f"• {todo.text}" for todo in todos)
+
+    grouped: dict[str, list[db.Todo]] = {}
+    for todo in todos:
+        grouped.setdefault(todo.category, []).append(todo)
+
+    lines = ["Open tasks:"]
+    for category in sorted(grouped):
+        lines.append(f"\n{category.title()}:")
+        for todo in grouped[category]:
+            due = format_due_date(todo.due_date)
+            lines.append(f"• {todo.text} — due: {due}")
     return "\n".join(lines)
+
+
+def _format_added(todo: db.Todo) -> str:
+    due = format_due_date(todo.due_date)
+    return f'Added "{todo.text}" ({todo.category}, due: {due}).'
 
 
 def handle_intents(intents: list[Intent], db_path: Path, created_by: str) -> str:
@@ -31,26 +46,27 @@ def handle_intents(intents: list[Intent], db_path: Path, created_by: str) -> str
     return (
         "I didn't understand that yet. Try:\n"
         "• add milk to the list\n"
-        "• we need butter\n"
-        "• we don't need paper any longer\n"
-        "• what's on the list?"
+        "• add pay rent by friday category admin\n"
+        "• show me the shopping list\n"
+        "• remove milk from the list"
     )
 
 
 def handle_intent(intent: Intent, db_path: Path, created_by: str) -> str:
     if intent.name == "greeting":
-        return "Hi! I'm here — need anything added to the list or checked off?"
+        return "Hi! What should I add, remove, or remind you about?"
 
     if intent.name == "thanks":
-        return "You're welcome! Happy to help."
+        return "You're welcome — happy to help."
 
     if intent.name == "help":
         return (
-            "I can manage your shared shopping list:\n"
-            "• Domus, add milk to the list\n"
-            "• Domus, what's on the list?\n"
-            "• Domus, check off milk\n"
-            "• Domus, remove milk"
+            "I can manage shared tasks and shopping items:\n"
+            "• add milk to the list\n"
+            "• add pay rent by friday category admin\n"
+            "• show me the shopping list\n"
+            "• remove milk from the list\n"
+            "• check off milk"
         )
 
     if intent.name == "list_todos":
@@ -58,9 +74,15 @@ def handle_intent(intent: Intent, db_path: Path, created_by: str) -> str:
 
     if intent.name == "add_todo":
         if not intent.item:
-            return "What should I add to the list?"
-        todo = db.add_todo(db_path, intent.item, created_by)
-        return f'Added "{todo.text}" to the list.'
+            return "What should I add?"
+        todo = db.add_todo(
+            db_path,
+            intent.item,
+            created_by,
+            due_date=intent.due_date,
+            category=intent.category or "general",
+        )
+        return _format_added(todo)
 
     if intent.name == "complete_todo":
         if not intent.item:

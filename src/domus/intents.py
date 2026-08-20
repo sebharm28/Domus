@@ -6,7 +6,10 @@ from typing import Literal
 
 import httpx
 
+from domus.categories import infer_category
 from domus.config import Settings
+from domus.dates import parse_category_hint, parse_due_date
+from domus.natural_language import try_parse_natural_add
 
 logger = logging.getLogger(__name__)
 
@@ -37,32 +40,47 @@ VALID_INTENTS = {
 class Intent:
     name: IntentName
     item: str | None = None
+    due_date: str | None = None
+    category: str | None = None
 
 
 SYSTEM_PROMPT = """You parse household assistant commands for a Telegram bot.
+Users write in casual, messy natural language — typos and unclear phrasing are normal.
 Return ONLY valid JSON with this shape:
-{"intents":[{"intent":"add_todo|complete_todo|remove_todo|list_todos|help|greeting|thanks|unknown","item":string|null}, ...]}
+{"intents":[{"intent":"add_todo|complete_todo|remove_todo|list_todos|help|greeting|thanks|unknown","item":string|null,"due_date":"YYYY-MM-DD"|null,"category":"shopping|household|admin|maintenance|personal|general"|null}, ...]}
 
 Rules:
+- Interpret intent generously from context; do not require exact command wording.
 - Return one or more intents if the user asks for multiple things in one message.
-- add_todo: add something to the shared shopping/to-do list
+- add_todo: add a task or shopping item; extract due_date and category when mentioned
 - complete_todo: mark an item as done or bought
 - remove_todo: remove an item from the list without marking done
-- list_todos: show open list items
-- help: user asks what you can do
-- greeting: hi, hello, hey, or other friendly hellos
-- thanks: thank you, thanks, danke, or other gratitude
-- unknown: cannot map confidently
+- list_todos: show open items
+- help, greeting, thanks: social intents
+- unknown: only if truly impossible to map
+- Categories: shopping (groceries), household (cleaning/trash), admin (rent/bills), maintenance, personal (work/errands), general
+- Infer due dates from phrases like "until tomorrow", "by friday", "due next week"
+- Item text should be a short task label, not the full original sentence
 
 Natural language examples:
-"hello" -> {"intents":[{"intent":"greeting","item":null}]}
-"thank you" -> {"intents":[{"intent":"thanks","item":null}]}
-"we need butter" -> {"intents":[{"intent":"add_todo","item":"butter"}]}
-"we do not need paper any longer" -> {"intents":[{"intent":"remove_todo","item":"paper"}]}
-"we need butter. we do not need paper any longer." -> {"intents":[{"intent":"add_todo","item":"butter"},{"intent":"remove_todo","item":"paper"}]}
-"I bought the milk" -> {"intents":[{"intent":"complete_todo","item":"milk"}]}
-"what's on the list?" -> {"intents":[{"intent":"list_todos","item":null}]}
+"hello" -> {"intents":[{"intent":"greeting","item":null,"due_date":null,"category":null}]}
+"I have a todo untill tomorrow where I have to do a power bi report for work" -> {"intents":[{"intent":"add_todo","item":"power bi report","due_date":"YYYY-MM-DD","category":"personal"}]}
+"could you show me the shopping list" -> {"intents":[{"intent":"list_todos","item":null,"due_date":null,"category":null}]}
+"we need butter" -> {"intents":[{"intent":"add_todo","item":"butter","due_date":null,"category":"shopping"}]}
+"please remove milk off the list" -> {"intents":[{"intent":"remove_todo","item":"milk","due_date":null,"category":null}]}
 """
+
+
+def _build_add_intent(raw_item: str, default_category: str | None = None) -> Intent:
+    text, category_hint = parse_category_hint(raw_item)
+    text, due_date = parse_due_date(text)
+    text = re.sub(r"\s+", " ", text).strip(" ,:-")
+    return Intent(
+        name="add_todo",
+        item=text or None,
+        due_date=due_date,
+        category=infer_category(text, category_hint or default_category),
+    )
 
 
 async def parse_intents(text: str, settings: Settings) -> list[Intent]:
@@ -105,7 +123,22 @@ def _intent_from_dict(data: dict) -> Intent:
     intent_name = data.get("intent", "unknown")
     if intent_name not in VALID_INTENTS:
         intent_name = "unknown"
-    return Intent(name=intent_name, item=_normalize_item(data.get("item")))
+
+    item = _normalize_item(data.get("item"))
+    due_date = data.get("due_date")
+    category = data.get("category")
+    if intent_name == "add_todo" and item:
+        item, parsed_due = parse_due_date(item)
+        due_date = due_date or parsed_due
+        item, category_hint = parse_category_hint(item)
+        category = infer_category(item, category or category_hint)
+
+    return Intent(
+        name=intent_name,
+        item=item,
+        due_date=due_date,
+        category=category,
+    )
 
 
 def _intents_from_payload(parsed: dict | list) -> list[Intent]:
@@ -122,10 +155,17 @@ def _intents_from_payload(parsed: dict | list) -> list[Intent]:
 
 
 async def _parse_with_openrouter(text: str, settings: Settings) -> list[Intent]:
+    from datetime import date
+
+    today = date.today()
+    system_prompt = (
+        f"{SYSTEM_PROMPT}\nToday is {today.isoformat()} ({today.strftime('%A')}). "
+        "Use this when resolving relative dates like tomorrow or friday."
+    )
     payload = {
         "model": settings.openrouter_model,
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": text},
         ],
         "temperature": 0,
@@ -169,7 +209,7 @@ def _split_items(raw: str) -> list[str]:
 
 
 def _split_clauses(text: str) -> list[str]:
-    parts = re.split(r"[.!?\n]+", text.strip())
+    parts = re.split(r"(?<=[.!?])\s+|[\n;]+|\s*,\s*(?=please\s)", text.strip(), flags=re.IGNORECASE)
     return [part.strip(" ,:;-") for part in parts if part.strip(" ,:;-")]
 
 
@@ -189,20 +229,39 @@ def _parse_clause_intents(normalized: str) -> list[Intent]:
     if re.search(r"\b(help|what can you do)\b", normalized):
         return [Intent(name="help")]
 
-    need_match = re.match(r"^(?:also |and )?we need\s+(.+)$", normalized)
+    if re.search(
+        r"(?:show(?: me)?(?: everything| the)?(?: on)?(?: the)? (?:list|shopping list|todo list|tasks)|"
+        r"share (?:the )?(?:current )?(?:shopping )?list|what(?:'s| is) on (?:the )?(?:list|shopping list|todo list)|"
+        r"^list(?: items| todos)?$)",
+        normalized,
+    ):
+        return [Intent(name="list_todos")]
+
+    need_match = re.match(r"^(?:please |could u |could you |also |and )?we need\s+(.+)$", normalized)
     if need_match:
-        return [Intent(name="add_todo", item=item) for item in _split_items(need_match.group(1))]
+        return [_build_add_intent(item) for item in _split_items(need_match.group(1))]
 
     add_match = re.search(
-        r"^(?:also |and )?(?:(?:add|put)\s+(.+?)\s+(?:to|on)\s+(?:the\s+)?(?:list|shopping list)\s*$|need\s+(?:to get|more)\s+(.+?)$)",
+        r"^(?:please |could u |could you |also |and )?"
+        r"(?:(?:add|put)\s+(.+?)\s+(?:to|on|off)\s+(?:the\s+)?(?:list|shopping list|todo list)\s*$|"
+        r"need\s+(?:to get|more)\s+(.+?)$)",
         normalized,
     )
     if add_match:
         item = next(group for group in add_match.groups() if group)
-        return [Intent(name="add_todo", item=_normalize_item(item))]
+        return [_build_add_intent(item, default_category="shopping")]
+
+    task_add_match = re.match(
+        r"^(?:please |could u |could you |also |and )?add\s+(.+)$",
+        normalized,
+    )
+    if task_add_match:
+        return [_build_add_intent(task_add_match.group(1))]
 
     remove_match = re.search(
-        r"^(?:also |and )?(?:(?:remove|delete)\s+(.+?)$|(?:we )?(?:do not|don't|no longer)\s+need\s+(.+?)(?:\s+any(?:\s+)?(?:longer|more))?$)",
+        r"^(?:please |also |and |after )?"
+        r"(?:(?:remove|delete|deleting)\s+(.+?)(?:\s+(?:from|off)\s+(?:the\s+)?(?:list|shopping list|todo list))?$|"
+        r"(?:we )?(?:do not|don't|no longer)\s+need\s+(.+?)(?:\s+any(?:\s+)?(?:longer|more))?$)",
         normalized,
     )
     if remove_match:
@@ -210,27 +269,27 @@ def _parse_clause_intents(normalized: str) -> list[Intent]:
         return [Intent(name="remove_todo", item=_normalize_item(item))]
 
     complete_match = re.search(
-        r"^(?:also |and )?(?:check off|mark|done with|bought|got)\s+(?:the\s+)?(.+?)(?:\s+because\b.*)?$",
+        r"^(?:please |also |and )?(?:check off|mark|done with|bought|got)\s+(?:the\s+)?(.+?)(?:\s+because\b.*)?$",
         normalized,
     )
     if complete_match:
         return [Intent(name="complete_todo", item=_normalize_item(complete_match.group(1)))]
 
-    if re.search(
-        r"(?:^list(?: items| todos)?$|^show(?: the)?(?: list| shopping list)?$|what(?:'s| is) on (?:the )?(?:list|shopping list))",
-        normalized,
-    ):
-        return [Intent(name="list_todos")]
-
     return []
 
 
-def _parse_clause(normalized: str) -> Intent | None:
-    intents = _parse_clause_intents(normalized)
-    return intents[0] if intents else None
-
-
 def _parse_with_rules(text: str) -> list[Intent]:
+    natural = try_parse_natural_add(text)
+    if natural:
+        return [
+            Intent(
+                name="add_todo",
+                item=natural.item,
+                due_date=natural.due_date,
+                category=natural.category,
+            )
+        ]
+
     intents: list[Intent] = []
     for clause in _split_clauses(text):
         normalized = clause.strip().lower().rstrip(".!?")

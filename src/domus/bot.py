@@ -8,8 +8,10 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 
 from domus.config import get_settings
 from domus.conversation_log import ConversationLog
-from domus.db import init_db
+from domus.db import init_db, subscribe_chat
+from domus.lifecycle import notify_subscribed_chats
 from domus.router import route_message
+from domus.scheduler import start_reminder_scheduler
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +79,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     settings = context.application.bot_data["settings"]
     conversation_log: ConversationLog = context.application.bot_data["conversation_log"]
+    subscribe_chat(settings.database_path, chat.id, chat.title)
     try:
         await message.chat.send_action(ChatAction.TYPING)
         reply = await asyncio.wait_for(
@@ -102,7 +105,13 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.exception("Unhandled bot error while processing update: %s", update, exc_info=context.error)
 
 
+async def on_init(application: Application) -> None:
+    start_reminder_scheduler(application)
+    await notify_subscribed_chats(application, "Hi, I am awake and ready.")
+
+
 async def on_shutdown(application: Application) -> None:
+    await notify_subscribed_chats(application, "Goodbye, I am going to sleep now.")
     conversation_log: ConversationLog = application.bot_data.get("conversation_log")
     if conversation_log is not None:
         conversation_log.close()
@@ -117,6 +126,7 @@ def build_application() -> Application:
     application = (
         Application.builder()
         .token(settings.telegram_bot_token)
+        .post_init(on_init)
         .post_shutdown(on_shutdown)
         .build()
     )
