@@ -186,6 +186,11 @@ def list_due_todos_for_reminder(db_path: Path, today: date | None = None) -> lis
     return [_row_to_todo(row) for row in rows]
 
 
+def mark_todo_reminded(db_path: Path, todo_id: int) -> None:
+    with connect(db_path) as conn:
+        conn.execute("UPDATE todos SET reminder_sent = 1 WHERE id = ?", (todo_id,))
+
+
 def clear_shopping_list(db_path: Path) -> int:
     with connect(db_path) as conn:
         cursor = conn.execute(

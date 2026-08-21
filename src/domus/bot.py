@@ -9,6 +9,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 from domus.config import get_settings
 from domus.conversation_log import ConversationLog
 from domus.db import init_db, subscribe_chat
+from domus.food_db import init_food_tables
 from domus.lifecycle import notify_subscribed_chats
 from domus.router import route_message
 from domus.scheduler import start_reminder_scheduler
@@ -57,6 +58,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "• Domus, add milk to the list\n"
         "• Domus, we need butter and eggs\n"
         "• Domus, what's on the list?\n"
+        "• Domus, what should I eat for dinner?\n"
         "• Domus, thank you"
     )
 
@@ -121,6 +123,7 @@ async def on_shutdown(application: Application) -> None:
 def build_application() -> Application:
     settings = get_settings()
     init_db(settings.database_path)
+    init_food_tables(settings.database_path)
     conversation_log = ConversationLog()
 
     application = (

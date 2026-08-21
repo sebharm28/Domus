@@ -10,6 +10,8 @@ from domus.categories import infer_category
 from domus.config import Settings
 from domus.dates import parse_category_hint, parse_due_date
 from domus.natural_language import try_parse_natural_add
+from domus.structured_add import try_parse_structured_add
+from domus.text_utils import sanitize_command
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +20,8 @@ IntentName = Literal[
     "complete_todo",
     "remove_todo",
     "list_todos",
+    "suggest_meal",
+    "log_meal",
     "help",
     "greeting",
     "thanks",
@@ -29,6 +33,8 @@ VALID_INTENTS = {
     "complete_todo",
     "remove_todo",
     "list_todos",
+    "suggest_meal",
+    "log_meal",
     "help",
     "greeting",
     "thanks",
@@ -47,7 +53,7 @@ class Intent:
 SYSTEM_PROMPT = """You parse household assistant commands for a Telegram bot.
 Users write in casual, messy natural language — typos and unclear phrasing are normal.
 Return ONLY valid JSON with this shape:
-{"intents":[{"intent":"add_todo|complete_todo|remove_todo|list_todos|help|greeting|thanks|unknown","item":string|null,"due_date":"YYYY-MM-DD"|null,"category":"shopping|household|admin|maintenance|personal|general"|null}, ...]}
+{"intents":[{"intent":"add_todo|complete_todo|remove_todo|list_todos|suggest_meal|log_meal|help|greeting|thanks|unknown","item":string|null,"due_date":"YYYY-MM-DD"|null,"category":"shopping|household|admin|maintenance|personal|general"|null}, ...]}
 
 Rules:
 - Interpret intent generously from context; do not require exact command wording.
@@ -56,18 +62,21 @@ Rules:
 - complete_todo: mark an item as done or bought
 - remove_todo: remove an item from the list without marking done
 - list_todos: show open items
+- suggest_meal: user asks what to eat, meal ideas, dinner/breakfast suggestions
+- log_meal: user says what they ate (e.g. "I had pasta for dinner")
 - help, greeting, thanks: social intents
 - unknown: only if truly impossible to map
 - Categories: shopping (groceries), household (cleaning/trash), admin (rent/bills), maintenance, personal (work/errands), general
 - Infer due dates from phrases like "until tomorrow", "by friday", "due next week"
 - Item text should be a short task label, not the full original sentence
+- For add_todo with quotes, item is only the quoted text
 
 Natural language examples:
 "hello" -> {"intents":[{"intent":"greeting","item":null,"due_date":null,"category":null}]}
+"add \"find a loving girl friend\" to my todo list until tomorrow" -> {"intents":[{"intent":"add_todo","item":"find a loving girl friend","due_date":"YYYY-MM-DD","category":"personal"}]}
 "I have a todo untill tomorrow where I have to do a power bi report for work" -> {"intents":[{"intent":"add_todo","item":"power bi report","due_date":"YYYY-MM-DD","category":"personal"}]}
+"what should I eat for dinner?" -> {"intents":[{"intent":"suggest_meal","item":"dinner","due_date":null,"category":null}]}
 "could you show me the shopping list" -> {"intents":[{"intent":"list_todos","item":null,"due_date":null,"category":null}]}
-"we need butter" -> {"intents":[{"intent":"add_todo","item":"butter","due_date":null,"category":"shopping"}]}
-"please remove milk off the list" -> {"intents":[{"intent":"remove_todo","item":"milk","due_date":null,"category":null}]}
 """
 
 
@@ -231,11 +240,26 @@ def _parse_clause_intents(normalized: str) -> list[Intent]:
 
     if re.search(
         r"(?:show(?: me)?(?: everything| the)?(?: on)?(?: the)? (?:list|shopping list|todo list|tasks)|"
-        r"share (?:the )?(?:current )?(?:shopping )?list|what(?:'s| is) on (?:the )?(?:list|shopping list|todo list)|"
+        r"share (?:the )?(?:current )?(?:shopping )?list|what(?:'s| is) on (?:the |my )?(?:list|shopping list|todo list)|"
         r"^list(?: items| todos)?$)",
         normalized,
     ):
         return [Intent(name="list_todos")]
+
+    if re.search(
+        r"(?:what should i eat|what can i eat|what to eat|meal idea|dinner idea|lunch idea|breakfast idea|"
+        r"suggest (?:a )?(?:meal|food|dinner|lunch|breakfast)|what(?:'s| is) for (?:dinner|lunch|breakfast))",
+        normalized,
+    ):
+        meal_type = None
+        for candidate in ("breakfast", "lunch", "dinner", "snack"):
+            if candidate in normalized:
+                meal_type = candidate
+                break
+        return [Intent(name="suggest_meal", item=meal_type)]
+
+    if re.search(r"\b(i had|i ate|we had|we ate)\b", normalized):
+        return [Intent(name="log_meal", item=normalized)]
 
     need_match = re.match(r"^(?:please |could u |could you |also |and )?we need\s+(.+)$", normalized)
     if need_match:
@@ -260,7 +284,7 @@ def _parse_clause_intents(normalized: str) -> list[Intent]:
 
     remove_match = re.search(
         r"^(?:please |also |and |after )?"
-        r"(?:(?:remove|delete|deleting)\s+(.+?)(?:\s+(?:from|off)\s+(?:the\s+)?(?:list|shopping list|todo list))?$|"
+        r"(?:(?:remove|delete|deleting)\s+(?:the\s+)?(?:todo\s+)?(.+?)(?:\s+(?:from|off)\s+(?:the\s+)?(?:list|shopping list|todo list))?$|"
         r"(?:we )?(?:do not|don't|no longer)\s+need\s+(.+?)(?:\s+any(?:\s+)?(?:longer|more))?$)",
         normalized,
     )
@@ -279,19 +303,27 @@ def _parse_clause_intents(normalized: str) -> list[Intent]:
 
 
 def _parse_with_rules(text: str) -> list[Intent]:
-    natural = try_parse_natural_add(text)
-    if natural:
-        return [
-            Intent(
-                name="add_todo",
-                item=natural.item,
-                due_date=natural.due_date,
-                category=natural.category,
-            )
-        ]
+    cleaned = sanitize_command(text)
+
+    structured = try_parse_structured_add(cleaned)
+    if structured:
+        item, due_date, category = structured
+        return [Intent(name="add_todo", item=item, due_date=due_date, category=category)]
+
+    if not re.match(r"^(?:add|put|remove|delete|show|list|what)", cleaned, re.IGNORECASE):
+        natural = try_parse_natural_add(cleaned)
+        if natural:
+            return [
+                Intent(
+                    name="add_todo",
+                    item=natural.item,
+                    due_date=natural.due_date,
+                    category=natural.category,
+                )
+            ]
 
     intents: list[Intent] = []
-    for clause in _split_clauses(text):
+    for clause in _split_clauses(cleaned):
         normalized = clause.strip().lower().rstrip(".!?")
         intents.extend(_parse_clause_intents(normalized))
 

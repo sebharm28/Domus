@@ -3,6 +3,7 @@ from pathlib import Path
 from domus import db
 from domus.dates import format_due_date
 from domus.intents import Intent
+from domus.meals import handle_log_meal, handle_suggest_meal
 
 
 def format_todo_list(todos: list[db.Todo]) -> str:
@@ -48,7 +49,8 @@ def handle_intents(intents: list[Intent], db_path: Path, created_by: str) -> str
         "• add milk to the list\n"
         "• add pay rent by friday category admin\n"
         "• show me the shopping list\n"
-        "• remove milk from the list"
+        "• remove milk from the list\n"
+        "• what should I eat for dinner?"
     )
 
 
@@ -66,11 +68,18 @@ def handle_intent(intent: Intent, db_path: Path, created_by: str) -> str:
             "• add pay rent by friday category admin\n"
             "• show me the shopping list\n"
             "• remove milk from the list\n"
-            "• check off milk"
+            "• check off milk\n"
+            "• what should I eat for dinner?"
         )
 
     if intent.name == "list_todos":
         return format_todo_list(db.list_open_todos(db_path))
+
+    if intent.name == "suggest_meal":
+        return handle_suggest_meal("", db_path, meal_type=intent.item)
+
+    if intent.name == "log_meal":
+        return handle_log_meal(intent.item or "", db_path, created_by)
 
     if intent.name == "add_todo":
         if not intent.item:
