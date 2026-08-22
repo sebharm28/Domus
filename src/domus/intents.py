@@ -22,6 +22,8 @@ IntentName = Literal[
     "list_todos",
     "suggest_meal",
     "log_meal",
+    "plan_meal",
+    "daily_briefing",
     "help",
     "greeting",
     "thanks",
@@ -35,6 +37,8 @@ VALID_INTENTS = {
     "list_todos",
     "suggest_meal",
     "log_meal",
+    "plan_meal",
+    "daily_briefing",
     "help",
     "greeting",
     "thanks",
@@ -53,7 +57,7 @@ class Intent:
 SYSTEM_PROMPT = """You parse household assistant commands for a Telegram bot.
 Users write in casual, messy natural language — typos and unclear phrasing are normal.
 Return ONLY valid JSON with this shape:
-{"intents":[{"intent":"add_todo|complete_todo|remove_todo|list_todos|suggest_meal|log_meal|help|greeting|thanks|unknown","item":string|null,"due_date":"YYYY-MM-DD"|null,"category":"shopping|household|admin|maintenance|personal|general"|null}, ...]}
+{"intents":[{"intent":"add_todo|complete_todo|remove_todo|list_todos|suggest_meal|log_meal|plan_meal|daily_briefing|help|greeting|thanks|unknown","item":string|null,"due_date":"YYYY-MM-DD"|null,"category":"shopping|household|admin|maintenance|personal|general"|null}, ...]}
 
 Rules:
 - Interpret intent generously from context; do not require exact command wording.
@@ -64,6 +68,8 @@ Rules:
 - list_todos: show open items
 - suggest_meal: user asks what to eat, meal ideas, dinner/breakfast suggestions
 - log_meal: user says what they ate (e.g. "I had pasta for dinner")
+- plan_meal: user decides to cook something (e.g. "let's make curry with rice tonight") — add missing ingredients to shopping list
+- daily_briefing: user asks for today's overview (tasks due, shopping, meal idea)
 - help, greeting, thanks: social intents
 - unknown: only if truly impossible to map
 - Categories: shopping (groceries), household (cleaning/trash), admin (rent/bills), maintenance, personal (work/errands), general
@@ -76,6 +82,8 @@ Natural language examples:
 "add \"find a loving girl friend\" to my todo list until tomorrow" -> {"intents":[{"intent":"add_todo","item":"find a loving girl friend","due_date":"YYYY-MM-DD","category":"personal"}]}
 "I have a todo untill tomorrow where I have to do a power bi report for work" -> {"intents":[{"intent":"add_todo","item":"power bi report","due_date":"YYYY-MM-DD","category":"personal"}]}
 "what should I eat for dinner?" -> {"intents":[{"intent":"suggest_meal","item":"dinner","due_date":null,"category":null}]}
+"let's make curry with rice tonight" -> {"intents":[{"intent":"plan_meal","item":"curry with rice","due_date":null,"category":null}]}
+"what's on today?" -> {"intents":[{"intent":"daily_briefing","item":null,"due_date":null,"category":null}]}
 "could you show me the shopping list" -> {"intents":[{"intent":"list_todos","item":null,"due_date":null,"category":null}]}
 """
 
@@ -245,6 +253,28 @@ def _parse_clause_intents(normalized: str) -> list[Intent]:
         normalized,
     ):
         return [Intent(name="list_todos")]
+
+    if re.search(
+        r"(?:what(?:'s| is) on today|daily briefing|morning briefing|what do i need to do today|"
+        r"what(?:'s| is) on for today|today's briefing|brief me)",
+        normalized,
+    ):
+        return [Intent(name="daily_briefing")]
+
+    if re.search(
+        r"(?:let's|lets|we(?:'ll| will)|i want to|going to|gonna)\s+(?:make|cook|prepare)\s+",
+        normalized,
+    ) or re.match(r"^(?:cook|make|prepare)\s+", normalized):
+        meal_name = normalized
+        for pattern in (
+            r"(?:let's|lets|we(?:'ll| will)|i want to|going to|gonna)\s+(?:make|cook|prepare)\s+(.+)$",
+            r"^(?:cook|make|prepare)\s+(.+)$",
+        ):
+            match = re.search(pattern, normalized)
+            if match:
+                meal_name = match.group(1).strip()
+                break
+        return [Intent(name="plan_meal", item=meal_name)]
 
     if re.search(
         r"(?:what should i eat|what can i eat|what to eat|meal idea|dinner idea|lunch idea|breakfast idea|"

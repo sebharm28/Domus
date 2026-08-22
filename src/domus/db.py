@@ -144,6 +144,35 @@ def list_open_todos(db_path: Path, category: str | None = None) -> list[Todo]:
     return [_row_to_todo(row) for row in rows]
 
 
+def list_todos_due_on(db_path: Path, day: date) -> list[Todo]:
+    with connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM todos
+            WHERE done = 0 AND due_date = ?
+            ORDER BY category ASC, id ASC
+            """,
+            (day.isoformat(),),
+        ).fetchall()
+    return [_row_to_todo(row) for row in rows]
+
+
+def list_overdue_todos(db_path: Path, today: date | None = None) -> list[Todo]:
+    today = today or date.today()
+    with connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM todos
+            WHERE done = 0
+              AND due_date IS NOT NULL
+              AND due_date < ?
+            ORDER BY due_date ASC, id ASC
+            """,
+            (today.isoformat(),),
+        ).fetchall()
+    return [_row_to_todo(row) for row in rows]
+
+
 def _find_open_todo(conn: sqlite3.Connection, item_text: str) -> sqlite3.Row | None:
     normalized = item_text.strip().lower()
     rows = conn.execute("SELECT * FROM todos WHERE done = 0 ORDER BY id ASC").fetchall()

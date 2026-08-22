@@ -12,7 +12,7 @@ from domus.db import init_db, subscribe_chat
 from domus.food_db import init_food_tables
 from domus.lifecycle import notify_subscribed_chats
 from domus.router import route_message
-from domus.scheduler import start_reminder_scheduler
+from domus.scheduler import start_morning_briefing_scheduler, start_reminder_scheduler
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +58,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "• Domus, add milk to the list\n"
         "• Domus, we need butter and eggs\n"
         "• Domus, what's on the list?\n"
+        "• Domus, what's on today?\n"
+        "• Domus, let's make curry with rice tonight\n"
         "• Domus, what should I eat for dinner?\n"
         "• Domus, thank you"
     )
@@ -109,6 +111,7 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def on_init(application: Application) -> None:
     start_reminder_scheduler(application)
+    start_morning_briefing_scheduler(application)
     await notify_subscribed_chats(application, "Hi, I am awake and ready.")
 
 
