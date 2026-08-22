@@ -10,6 +10,8 @@ from domus.categories import infer_category
 from domus.config import Settings
 from domus.dates import parse_category_hint, parse_due_date
 from domus.natural_language import try_parse_natural_add
+from domus.meals import _extract_missing_meal_query
+from domus.recurrence import parse_reminder_phrase
 from domus.structured_add import try_parse_structured_add
 from domus.text_utils import sanitize_command
 
@@ -23,6 +25,12 @@ IntentName = Literal[
     "suggest_meal",
     "log_meal",
     "plan_meal",
+    "plan_week",
+    "show_meal_plan",
+    "missing_ingredients",
+    "add_recurring_reminder",
+    "list_reminders",
+    "remove_reminder",
     "daily_briefing",
     "help",
     "greeting",
@@ -38,6 +46,12 @@ VALID_INTENTS = {
     "suggest_meal",
     "log_meal",
     "plan_meal",
+    "plan_week",
+    "show_meal_plan",
+    "missing_ingredients",
+    "add_recurring_reminder",
+    "list_reminders",
+    "remove_reminder",
     "daily_briefing",
     "help",
     "greeting",
@@ -52,12 +66,13 @@ class Intent:
     item: str | None = None
     due_date: str | None = None
     category: str | None = None
+    recurrence: str | None = None
 
 
 SYSTEM_PROMPT = """You parse household assistant commands for a Telegram bot.
 Users write in casual, messy natural language — typos and unclear phrasing are normal.
 Return ONLY valid JSON with this shape:
-{"intents":[{"intent":"add_todo|complete_todo|remove_todo|list_todos|suggest_meal|log_meal|plan_meal|daily_briefing|help|greeting|thanks|unknown","item":string|null,"due_date":"YYYY-MM-DD"|null,"category":"shopping|household|admin|maintenance|personal|general"|null}, ...]}
+{"intents":[{"intent":"add_todo|complete_todo|remove_todo|list_todos|suggest_meal|log_meal|plan_meal|plan_week|show_meal_plan|missing_ingredients|add_recurring_reminder|list_reminders|remove_reminder|daily_briefing|help|greeting|thanks|unknown","item":string|null,"due_date":"YYYY-MM-DD"|null,"category":"shopping|household|admin|maintenance|personal|general"|null,"recurrence":"daily|weekly:monday|monthly:1"|null}, ...]}
 
 Rules:
 - Interpret intent generously from context; do not require exact command wording.
@@ -69,6 +84,12 @@ Rules:
 - suggest_meal: user asks what to eat, meal ideas, dinner/breakfast suggestions
 - log_meal: user says what they ate (e.g. "I had pasta for dinner")
 - plan_meal: user decides to cook something (e.g. "let's make curry with rice tonight") — add missing ingredients to shopping list
+- plan_week: user wants a dinner plan for the rest of the week with shopping list updates
+- show_meal_plan: user asks to see the current weekly meal plan
+- missing_ingredients: user asks what's still needed for a meal (read-only, no list changes)
+- add_recurring_reminder: repeating household reminders (weekly trash, monthly rent)
+- list_reminders: show all recurring reminders
+- remove_reminder: delete a recurring reminder
 - daily_briefing: user asks for today's overview (tasks due, shopping, meal idea)
 - help, greeting, thanks: social intents
 - unknown: only if truly impossible to map
@@ -82,8 +103,11 @@ Natural language examples:
 "add \"find a loving girl friend\" to my todo list until tomorrow" -> {"intents":[{"intent":"add_todo","item":"find a loving girl friend","due_date":"YYYY-MM-DD","category":"personal"}]}
 "I have a todo untill tomorrow where I have to do a power bi report for work" -> {"intents":[{"intent":"add_todo","item":"power bi report","due_date":"YYYY-MM-DD","category":"personal"}]}
 "what should I eat for dinner?" -> {"intents":[{"intent":"suggest_meal","item":"dinner","due_date":null,"category":null}]}
-"let's make curry with rice tonight" -> {"intents":[{"intent":"plan_meal","item":"curry with rice","due_date":null,"category":null}]}
-"what's on today?" -> {"intents":[{"intent":"daily_briefing","item":null,"due_date":null,"category":null}]}
+"let's make curry with rice tonight" -> {"intents":[{"intent":"plan_meal","item":"curry with rice","due_date":null,"category":null,"recurrence":null}]}
+"plan meals for this week" -> {"intents":[{"intent":"plan_week","item":null,"due_date":null,"category":null,"recurrence":null}]}
+"what's missing for dinner?" -> {"intents":[{"intent":"missing_ingredients","item":"dinner","due_date":null,"category":null,"recurrence":null}]}
+"remind us every Tuesday to take out the trash" -> {"intents":[{"intent":"add_recurring_reminder","item":"take out the trash","due_date":null,"category":null,"recurrence":"weekly:tuesday"}]}
+"what's on today?" -> {"intents":[{"intent":"daily_briefing","item":null,"due_date":null,"category":null,"recurrence":null}]}
 "could you show me the shopping list" -> {"intents":[{"intent":"list_todos","item":null,"due_date":null,"category":null}]}
 """
 
@@ -155,6 +179,7 @@ def _intent_from_dict(data: dict) -> Intent:
         item=item,
         due_date=due_date,
         category=category,
+        recurrence=data.get("recurrence"),
     )
 
 
@@ -245,6 +270,50 @@ def _parse_clause_intents(normalized: str) -> list[Intent]:
 
     if re.search(r"\b(help|what can you do)\b", normalized):
         return [Intent(name="help")]
+
+    recurring = parse_reminder_phrase(normalized)
+    if recurring:
+        task, recurrence = recurring
+        return [Intent(name="add_recurring_reminder", item=task, recurrence=recurrence)]
+
+    if re.search(
+        r"(?:show|list)(?: the)? recurring reminders|what reminders(?: are set)?",
+        normalized,
+    ):
+        return [Intent(name="list_reminders")]
+
+    remove_reminder_match = re.search(
+        r"^(?:please |also |and )?(?:remove|delete)\s+(?:the )?(?:recurring )?reminder(?: for)?\s+(.+)$",
+        normalized,
+    )
+    if remove_reminder_match:
+        return [Intent(name="remove_reminder", item=_normalize_item(remove_reminder_match.group(1)))]
+
+    remove_reminder_alt = re.search(
+        r"^(?:please |also |and )?(?:remove|delete)\s+(?:the )?(.+?)\s+reminder$",
+        normalized,
+    )
+    if remove_reminder_alt:
+        return [Intent(name="remove_reminder", item=_normalize_item(remove_reminder_alt.group(1)))]
+
+    if re.search(
+        r"plan meals?(?: for)?(?: this| the)? week|weekly meal plan|plan dinners?(?: for)?(?: this| the)? week",
+        normalized,
+    ):
+        return [Intent(name="plan_week")]
+
+    if re.search(
+        r"(?:show|what(?:'s| is))(?: the)? meal plan|meals? planned(?: for)?(?: this)? week|weekly meals?",
+        normalized,
+    ):
+        return [Intent(name="show_meal_plan")]
+
+    if re.search(
+        r"what(?:'s| is) missing|what do (?:we|i) need(?: to buy)? for",
+        normalized,
+    ):
+        query = _extract_missing_meal_query(normalized) or normalized
+        return [Intent(name="missing_ingredients", item=query)]
 
     if re.search(
         r"(?:show(?: me)?(?: everything| the)?(?: on)?(?: the)? (?:list|shopping list|todo list|tasks)|"

@@ -16,6 +16,15 @@ class Todo:
     created_at: str
 
 
+@dataclass(frozen=True)
+class Reminder:
+    id: int
+    text: str
+    recurrence: str
+    next_due: str
+    created_by: str
+
+
 def connect(db_path: Path) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
@@ -29,6 +38,12 @@ def _migrate_todos(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE todos ADD COLUMN category TEXT NOT NULL DEFAULT 'shopping'")
     if "reminder_sent" not in columns:
         conn.execute("ALTER TABLE todos ADD COLUMN reminder_sent INTEGER NOT NULL DEFAULT 0")
+
+
+def _migrate_reminders(conn: sqlite3.Connection) -> None:
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(reminders)")}
+    if "created_by" not in columns:
+        conn.execute("ALTER TABLE reminders ADD COLUMN created_by TEXT NOT NULL DEFAULT 'unknown'")
 
 
 def init_db(db_path: Path) -> None:
@@ -64,8 +79,9 @@ def init_db(db_path: Path) -> None:
             CREATE TABLE IF NOT EXISTS reminders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 text TEXT NOT NULL,
-                recurrence TEXT,
-                next_due TEXT
+                recurrence TEXT NOT NULL,
+                next_due TEXT NOT NULL,
+                created_by TEXT NOT NULL DEFAULT 'unknown'
             );
 
             CREATE TABLE IF NOT EXISTS notification_chats (
@@ -76,6 +92,7 @@ def init_db(db_path: Path) -> None:
             """
         )
         _migrate_todos(conn)
+        _migrate_reminders(conn)
 
 
 def _row_to_todo(row: sqlite3.Row) -> Todo:
@@ -226,3 +243,92 @@ def clear_shopping_list(db_path: Path) -> int:
             "DELETE FROM todos WHERE category = 'shopping' AND done = 0"
         )
         return cursor.rowcount
+
+
+def _row_to_reminder(row: sqlite3.Row) -> Reminder:
+    return Reminder(
+        id=row["id"],
+        text=row["text"],
+        recurrence=row["recurrence"],
+        next_due=row["next_due"],
+        created_by=row["created_by"] if "created_by" in row.keys() else "unknown",
+    )
+
+
+def add_reminder(
+    db_path: Path,
+    text: str,
+    recurrence: str,
+    created_by: str,
+    *,
+    next_due: date | None = None,
+) -> Reminder:
+    from domus.recurrence import first_due_date
+
+    due = next_due or first_due_date(recurrence)
+    with connect(db_path) as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO reminders (text, recurrence, next_due, created_by)
+            VALUES (?, ?, ?, ?)
+            """,
+            (text.strip(), recurrence, due.isoformat(), created_by),
+        )
+        reminder_id = cursor.lastrowid
+        row = conn.execute("SELECT * FROM reminders WHERE id = ?", (reminder_id,)).fetchone()
+    return _row_to_reminder(row)
+
+
+def list_reminders(db_path: Path) -> list[Reminder]:
+    with connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT * FROM reminders ORDER BY next_due ASC, id ASC"
+        ).fetchall()
+    return [_row_to_reminder(row) for row in rows]
+
+
+def list_due_recurring_reminders(db_path: Path, today: date | None = None) -> list[Reminder]:
+    today = today or date.today()
+    with connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM reminders
+            WHERE next_due <= ?
+            ORDER BY next_due ASC, id ASC
+            """,
+            (today.isoformat(),),
+        ).fetchall()
+    return [_row_to_reminder(row) for row in rows]
+
+
+def advance_reminder(db_path: Path, reminder_id: int) -> Reminder:
+    from domus.recurrence import next_due_date
+
+    with connect(db_path) as conn:
+        row = conn.execute("SELECT * FROM reminders WHERE id = ?", (reminder_id,)).fetchone()
+        if row is None:
+            raise ValueError(f"Reminder {reminder_id} not found")
+        reminder = _row_to_reminder(row)
+        current_due = date.fromisoformat(reminder.next_due)
+        new_due = next_due_date(reminder.recurrence, current_due)
+        conn.execute(
+            "UPDATE reminders SET next_due = ? WHERE id = ?",
+            (new_due.isoformat(), reminder_id),
+        )
+        updated = conn.execute("SELECT * FROM reminders WHERE id = ?", (reminder_id,)).fetchone()
+    return _row_to_reminder(updated)
+
+
+def _find_reminder(conn: sqlite3.Connection, item_text: str) -> sqlite3.Row | None:
+    normalized = item_text.strip().lower()
+    rows = conn.execute("SELECT * FROM reminders ORDER BY id ASC").fetchall()
+    return next((row for row in rows if normalized in row["text"].lower()), None)
+
+
+def remove_reminder(db_path: Path, item_text: str) -> Reminder | None:
+    with connect(db_path) as conn:
+        match = _find_reminder(conn, item_text)
+        if match is None:
+            return None
+        conn.execute("DELETE FROM reminders WHERE id = ?", (match["id"],))
+    return _row_to_reminder(match)

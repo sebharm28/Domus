@@ -60,6 +60,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "• Domus, what's on the list?\n"
         "• Domus, what's on today?\n"
         "• Domus, let's make curry with rice tonight\n"
+        "• Domus, plan meals for this week\n"
+        "• Domus, what's missing for dinner?\n"
+        "• Domus, remind us every Tuesday to take out the trash\n"
         "• Domus, what should I eat for dinner?\n"
         "• Domus, thank you"
     )

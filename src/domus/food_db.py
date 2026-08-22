@@ -9,6 +9,15 @@ from domus.db import connect
 
 
 @dataclass(frozen=True)
+class MealPlanEntry:
+    id: int
+    day: str
+    dish: str
+    ingredients: list[str]
+    food_id: int | None = None
+
+
+@dataclass(frozen=True)
 class Food:
     id: int
     name: str
@@ -58,6 +67,15 @@ def init_food_tables(db_path: Path) -> None:
                 food_id INTEGER NOT NULL,
                 eaten_at TEXT NOT NULL,
                 created_by TEXT,
+                FOREIGN KEY (food_id) REFERENCES foods(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS meal_plans (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                day TEXT NOT NULL UNIQUE,
+                dish TEXT NOT NULL,
+                food_id INTEGER,
+                ingredients TEXT NOT NULL DEFAULT '[]',
                 FOREIGN KEY (food_id) REFERENCES foods(id)
             );
             """
@@ -128,12 +146,71 @@ def suggest_foods(
     db_path: Path,
     meal_type: str | None = None,
     count: int = 3,
+    *,
+    exclude_ids: set[int] | None = None,
 ) -> list[Food]:
     recent = recent_food_ids(db_path)
-    candidates = [food for food in list_foods(db_path, meal_type) if food.id not in recent]
+    blocked = recent | (exclude_ids or set())
+    candidates = [food for food in list_foods(db_path, meal_type) if food.id not in blocked]
+    if not candidates:
+        candidates = [food for food in list_foods(db_path, meal_type) if food.id not in (exclude_ids or set())]
     if not candidates:
         candidates = list_foods(db_path, meal_type)
     if not candidates:
         return []
     random.shuffle(candidates)
     return candidates[:count]
+
+
+def _row_to_meal_plan(row: sqlite3.Row) -> MealPlanEntry:
+    return MealPlanEntry(
+        id=row["id"],
+        day=row["day"],
+        dish=row["dish"],
+        ingredients=json.loads(row["ingredients"]),
+        food_id=row["food_id"],
+    )
+
+
+def clear_meal_plan_range(db_path: Path, start_day: str, end_day: str) -> None:
+    with connect(db_path) as conn:
+        conn.execute(
+            "DELETE FROM meal_plans WHERE day >= ? AND day <= ?",
+            (start_day, end_day),
+        )
+
+
+def save_meal_plan_entry(db_path: Path, day: str, food: Food) -> MealPlanEntry:
+    with connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO meal_plans (day, dish, food_id, ingredients)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(day) DO UPDATE SET
+                dish = excluded.dish,
+                food_id = excluded.food_id,
+                ingredients = excluded.ingredients
+            """,
+            (day, food.name, food.id, json.dumps(food.ingredients)),
+        )
+        row = conn.execute("SELECT * FROM meal_plans WHERE day = ?", (day,)).fetchone()
+    return _row_to_meal_plan(row)
+
+
+def get_meal_plan_range(db_path: Path, start_day: str, end_day: str) -> list[MealPlanEntry]:
+    with connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM meal_plans
+            WHERE day >= ? AND day <= ?
+            ORDER BY day ASC
+            """,
+            (start_day, end_day),
+        ).fetchall()
+    return [_row_to_meal_plan(row) for row in rows]
+
+
+def get_meal_plan_for_day(db_path: Path, day: str) -> MealPlanEntry | None:
+    with connect(db_path) as conn:
+        row = conn.execute("SELECT * FROM meal_plans WHERE day = ?", (day,)).fetchone()
+    return _row_to_meal_plan(row) if row else None

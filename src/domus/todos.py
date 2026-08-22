@@ -4,7 +4,19 @@ from domus import db
 from domus.dates import format_due_date
 from domus.intents import Intent
 from domus.briefing import handle_daily_briefing
-from domus.meals import handle_log_meal, handle_plan_meal, handle_suggest_meal
+from domus.meals import (
+    handle_log_meal,
+    handle_missing_ingredients,
+    handle_plan_meal,
+    handle_plan_week,
+    handle_show_meal_plan,
+    handle_suggest_meal,
+)
+from domus.reminders import (
+    handle_add_recurring_reminder,
+    handle_list_reminders,
+    handle_remove_reminder,
+)
 
 
 def format_todo_list(todos: list[db.Todo]) -> str:
@@ -53,6 +65,9 @@ def handle_intents(intents: list[Intent], db_path: Path, created_by: str) -> str
         "• remove milk from the list\n"
         "• what should I eat for dinner?\n"
         "• let's make curry with rice tonight\n"
+        "• plan meals for this week\n"
+        "• what's missing for dinner?\n"
+        "• remind us every Tuesday to take out the trash\n"
         "• what's on today?"
     )
 
@@ -74,6 +89,9 @@ def handle_intent(intent: Intent, db_path: Path, created_by: str) -> str:
             "• check off milk\n"
             "• what should I eat for dinner?\n"
             "• let's make curry with rice tonight\n"
+            "• plan meals for this week\n"
+            "• what's missing for dinner?\n"
+            "• remind us every Tuesday to take out the trash\n"
             "• what's on today?"
         )
 
@@ -88,6 +106,30 @@ def handle_intent(intent: Intent, db_path: Path, created_by: str) -> str:
 
     if intent.name == "plan_meal":
         return handle_plan_meal(intent.item or "", db_path, created_by, meal_name=intent.item)
+
+    if intent.name == "plan_week":
+        return handle_plan_week(db_path, created_by)
+
+    if intent.name == "show_meal_plan":
+        return handle_show_meal_plan(db_path)
+
+    if intent.name == "missing_ingredients":
+        return handle_missing_ingredients(intent.item or "", db_path, meal_name=intent.item)
+
+    if intent.name == "add_recurring_reminder":
+        return handle_add_recurring_reminder(
+            intent.item or "",
+            db_path,
+            created_by,
+            task=intent.item,
+            recurrence=intent.recurrence,
+        )
+
+    if intent.name == "list_reminders":
+        return handle_list_reminders(db_path)
+
+    if intent.name == "remove_reminder":
+        return handle_remove_reminder(db_path, intent.item)
 
     if intent.name == "log_meal":
         return handle_log_meal(intent.item or "", db_path, created_by)

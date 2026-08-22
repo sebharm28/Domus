@@ -6,20 +6,29 @@ from telegram.ext import Application, ContextTypes
 from domus.briefing import build_daily_briefing
 from domus.config import Settings
 from domus.dates import format_due_date
-from domus.db import list_due_todos_for_reminder, list_notification_chats, mark_todo_reminded
+from domus.db import (
+    advance_reminder,
+    list_due_recurring_reminders,
+    list_due_todos_for_reminder,
+    list_notification_chats,
+    mark_todo_reminded,
+)
+from domus.recurrence import format_recurrence
 
 logger = logging.getLogger(__name__)
 
 
 async def send_due_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
     settings: Settings = context.application.bot_data["settings"]
-    due_todos = list_due_todos_for_reminder(settings.database_path, date.today())
-    if not due_todos:
+    today = date.today()
+    due_todos = list_due_todos_for_reminder(settings.database_path, today)
+    due_recurring = list_due_recurring_reminders(settings.database_path, today)
+    if not due_todos and not due_recurring:
         return
 
     chat_ids = list_notification_chats(settings.database_path)
     if not chat_ids:
-        logger.warning("Due todos found but no notification chats are subscribed")
+        logger.warning("Due reminders found but no notification chats are subscribed")
         return
 
     for todo in due_todos:
@@ -35,6 +44,21 @@ async def send_due_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
                 logger.exception("Failed to send reminder for todo %s to chat %s", todo.id, chat_id)
         mark_todo_reminded(settings.database_path, todo.id)
         logger.info("Sent reminder for todo %s to %d chat(s)", todo.id, len(chat_ids))
+
+    for reminder in due_recurring:
+        schedule = format_recurrence(reminder.recurrence)
+        message = f'Recurring reminder: "{reminder.text}" ({schedule}).'
+        for chat_id in chat_ids:
+            try:
+                await context.bot.send_message(chat_id=chat_id, text=message)
+            except Exception:
+                logger.exception(
+                    "Failed to send recurring reminder %s to chat %s",
+                    reminder.id,
+                    chat_id,
+                )
+        advance_reminder(settings.database_path, reminder.id)
+        logger.info("Sent recurring reminder %s to %d chat(s)", reminder.id, len(chat_ids))
 
 
 async def send_morning_briefing(context: ContextTypes.DEFAULT_TYPE) -> None:
