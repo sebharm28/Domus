@@ -38,6 +38,10 @@ def parse_due_date(text: str, today: date | None = None) -> tuple[str, str | Non
         (r"\bon\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", lambda m: _next_weekday(WEEKDAYS[m.group(1).lower()], today)),
         (r"\btomorrow\b", lambda _m: today + timedelta(days=1)),
         (r"\btoday\b", lambda _m: today),
+        (
+            r"\b(?:have to|need to|do it|task is|it is|that is|is for|said .{0,20} for)\s+(?:for\s+)?(tomorrow)\b",
+            lambda _m: today + timedelta(days=1),
+        ),
     ]
 
     for pattern, parser in patterns:
@@ -62,6 +66,12 @@ def parse_category_hint(text: str) -> tuple[str, str | None]:
         return text, None
     cleaned = (text[: match.start()] + text[match.end() :]).strip(" ,:-")
     return cleaned, match.group(1).lower()
+
+
+def extract_due_date_from_message(text: str, today: date | None = None) -> str | None:
+    """Find a due date anywhere in the message, including follow-up clauses."""
+    _, due = parse_due_date(text, today)
+    return due
 
 
 def format_due_date(due_date: str | None) -> str:

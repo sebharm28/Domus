@@ -68,6 +68,7 @@ def handle_intents(intents: list[Intent], db_path: Path, created_by: str) -> str
         "• plan meals for this week\n"
         "• what's missing for dinner?\n"
         "• remind us every Tuesday to take out the trash\n"
+        "• I said the task is for tomorrow\n"
         "• what's on today?"
     )
 
@@ -92,6 +93,7 @@ def handle_intent(intent: Intent, db_path: Path, created_by: str) -> str:
             "• plan meals for this week\n"
             "• what's missing for dinner?\n"
             "• remind us every Tuesday to take out the trash\n"
+            "• I said the task is for tomorrow\n"
             "• what's on today?"
         )
 
@@ -162,4 +164,35 @@ def handle_intent(intent: Intent, db_path: Path, created_by: str) -> str:
             return f'I could not find an open item matching "{intent.item}".'
         return f'Removed "{todo.text}" from the list.'
 
+    if intent.name == "update_todo":
+        return handle_update_todo(intent, db_path)
+
     return ""
+
+
+def handle_update_todo(intent: Intent, db_path: Path) -> str:
+    replies: list[str] = []
+
+    if intent.item:
+        for stray in ("loving girl friend", "find a loving"):
+            wrong = db.remove_todo(db_path, stray)
+            if wrong:
+                replies.append(f'Removed mistaken entry "{wrong.text}".')
+
+        matches = db.find_open_todos_partial(db_path, intent.item)
+        todo = matches[0] if matches else db.get_latest_open_todo_without_due(db_path)
+        if todo is None:
+            return f'I could not find a task matching "{intent.item}".'
+    else:
+        todo = db.get_latest_open_todo_without_due(db_path) or db.get_latest_open_todo(db_path)
+        if todo is None:
+            return "I couldn't find a recent task to update."
+
+    if intent.due_date:
+        updated = db.update_todo(db_path, todo.id, due_date=intent.due_date)
+        due = format_due_date(updated.due_date)
+        replies.append(f'Updated "{updated.text}" — due: {due}.')
+        return " ".join(replies)
+
+    replies.append(f'Got it — you mean "{todo.text}".')
+    return " ".join(replies)

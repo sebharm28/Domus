@@ -215,6 +215,74 @@ def remove_todo(db_path: Path, item_text: str) -> Todo | None:
     return _row_to_todo(match)
 
 
+def get_latest_open_todo(db_path: Path) -> Todo | None:
+    with connect(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM todos
+            WHERE done = 0
+            ORDER BY id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    return _row_to_todo(row) if row else None
+
+
+def get_latest_open_todo_without_due(db_path: Path) -> Todo | None:
+    with connect(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM todos
+            WHERE done = 0 AND due_date IS NULL
+            ORDER BY id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    return _row_to_todo(row) if row else None
+
+
+def update_todo(
+    db_path: Path,
+    todo_id: int,
+    *,
+    due_date: str | None = None,
+    text: str | None = None,
+) -> Todo:
+    fields: list[str] = []
+    params: list[str | int] = []
+    if due_date is not None:
+        fields.append("due_date = ?")
+        params.append(due_date)
+        fields.append("reminder_sent = 0")
+    if text is not None:
+        fields.append("text = ?")
+        params.append(text.strip())
+    if not fields:
+        raise ValueError("Nothing to update")
+
+    params.append(todo_id)
+    with connect(db_path) as conn:
+        conn.execute(
+            f"UPDATE todos SET {', '.join(fields)} WHERE id = ?",
+            params,
+        )
+        row = conn.execute("SELECT * FROM todos WHERE id = ?", (todo_id,)).fetchone()
+    return _row_to_todo(row)
+
+
+def find_open_todos_partial(db_path: Path, item_text: str) -> list[Todo]:
+    normalized = item_text.strip().lower()
+    with connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT * FROM todos WHERE done = 0 ORDER BY id DESC"
+        ).fetchall()
+    return [
+        _row_to_todo(row)
+        for row in rows
+        if normalized in row["text"].lower() or row["text"].lower() in normalized
+    ]
+
+
 def list_due_todos_for_reminder(db_path: Path, today: date | None = None) -> list[Todo]:
     today = today or date.today()
     with connect(db_path) as conn:

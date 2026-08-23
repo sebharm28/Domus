@@ -8,7 +8,7 @@ import httpx
 
 from domus.categories import infer_category
 from domus.config import Settings
-from domus.dates import parse_category_hint, parse_due_date
+from domus.dates import parse_category_hint, parse_due_date, extract_due_date_from_message
 from domus.natural_language import try_parse_natural_add
 from domus.meals import _extract_missing_meal_query
 from domus.recurrence import parse_reminder_phrase
@@ -21,6 +21,7 @@ IntentName = Literal[
     "add_todo",
     "complete_todo",
     "remove_todo",
+    "update_todo",
     "list_todos",
     "suggest_meal",
     "log_meal",
@@ -42,6 +43,7 @@ VALID_INTENTS = {
     "add_todo",
     "complete_todo",
     "remove_todo",
+    "update_todo",
     "list_todos",
     "suggest_meal",
     "log_meal",
@@ -72,7 +74,7 @@ class Intent:
 SYSTEM_PROMPT = """You parse household assistant commands for a Telegram bot.
 Users write in casual, messy natural language — typos and unclear phrasing are normal.
 Return ONLY valid JSON with this shape:
-{"intents":[{"intent":"add_todo|complete_todo|remove_todo|list_todos|suggest_meal|log_meal|plan_meal|plan_week|show_meal_plan|missing_ingredients|add_recurring_reminder|list_reminders|remove_reminder|daily_briefing|help|greeting|thanks|unknown","item":string|null,"due_date":"YYYY-MM-DD"|null,"category":"shopping|household|admin|maintenance|personal|general"|null,"recurrence":"daily|weekly:monday|monthly:1"|null}, ...]}
+{"intents":[{"intent":"add_todo|complete_todo|remove_todo|update_todo|list_todos|suggest_meal|log_meal|plan_meal|plan_week|show_meal_plan|missing_ingredients|add_recurring_reminder|list_reminders|remove_reminder|daily_briefing|help|greeting|thanks|unknown","item":string|null,"due_date":"YYYY-MM-DD"|null,"category":"shopping|household|admin|maintenance|personal|general"|null,"recurrence":"daily|weekly:monday|monthly:1"|null}, ...]}
 
 Rules:
 - Interpret intent generously from context; do not require exact command wording.
@@ -80,6 +82,7 @@ Rules:
 - add_todo: add a task or shopping item; extract due_date and category when mentioned
 - complete_todo: mark an item as done or bought
 - remove_todo: remove an item from the list without marking done
+- update_todo: fix the due date or focus on a recent task (e.g. "I said the task is for tomorrow", "I meant going to the bank")
 - list_todos: show open items
 - suggest_meal: user asks what to eat, meal ideas, dinner/breakfast suggestions
 - log_meal: user says what they ate (e.g. "I had pasta for dinner")
@@ -99,8 +102,9 @@ Rules:
 - For add_todo with quotes, item is only the quoted text
 
 Natural language examples:
-"hello" -> {"intents":[{"intent":"greeting","item":null,"due_date":null,"category":null}]}
-"add \"find a loving girl friend\" to my todo list until tomorrow" -> {"intents":[{"intent":"add_todo","item":"find a loving girl friend","due_date":"YYYY-MM-DD","category":"personal"}]}
+"hello" -> {"intents":[{"intent":"greeting","item":null,"due_date":null,"category":null,"recurrence":null}]}
+"add pay rent by friday category admin" -> {"intents":[{"intent":"add_todo","item":"pay rent","due_date":"YYYY-MM-DD","category":"admin","recurrence":null}]}
+"I said the task is for tomorrow" -> {"intents":[{"intent":"update_todo","item":null,"due_date":"YYYY-MM-DD","category":null,"recurrence":null}]}
 "I have a todo untill tomorrow where I have to do a power bi report for work" -> {"intents":[{"intent":"add_todo","item":"power bi report","due_date":"YYYY-MM-DD","category":"personal"}]}
 "what should I eat for dinner?" -> {"intents":[{"intent":"suggest_meal","item":"dinner","due_date":null,"category":null}]}
 "let's make curry with rice tonight" -> {"intents":[{"intent":"plan_meal","item":"curry with rice","due_date":null,"category":null,"recurrence":null}]}
@@ -110,6 +114,54 @@ Natural language examples:
 "what's on today?" -> {"intents":[{"intent":"daily_briefing","item":null,"due_date":null,"category":null,"recurrence":null}]}
 "could you show me the shopping list" -> {"intents":[{"intent":"list_todos","item":null,"due_date":null,"category":null}]}
 """
+
+
+def _default_list_category(normalized: str) -> str | None:
+    if "shopping list" in normalized or "shopping" in normalized.split("list")[0]:
+        return "shopping"
+    return None
+
+
+def _parse_correction_intents(text: str) -> list[Intent] | None:
+    normalized = sanitize_command(text).strip().lower().rstrip(".!?")
+    due = extract_due_date_from_message(text)
+
+    if re.search(
+        r"\b(?:i said|i meant)(?: to say)?(?: that)?(?: the task is| it is| that's)?(?: for)?\s*tomorrow\b",
+        normalized,
+    ) or re.search(r"\b(?:the task is|it is|that's|task is) for tomorrow\b", normalized):
+        return [Intent(name="update_todo", due_date=due)]
+
+    if re.search(r"\b(?:have to|need to) (?:do it|do that|do this) tomorrow\b", normalized):
+        return [Intent(name="update_todo", due_date=due)]
+
+    meant_match = re.search(r"\bi meant (.+)$", normalized)
+    if meant_match:
+        item = _normalize_item(meant_match.group(1))
+        return [Intent(name="update_todo", item=item, due_date=due)]
+
+    return None
+
+
+def _merge_due_dates(text: str, intents: list[Intent]) -> list[Intent]:
+    due = extract_due_date_from_message(text)
+    if not due:
+        return intents
+    merged: list[Intent] = []
+    for intent in intents:
+        if intent.name == "add_todo" and not intent.due_date:
+            merged.append(
+                Intent(
+                    name=intent.name,
+                    item=intent.item,
+                    due_date=due,
+                    category=intent.category,
+                    recurrence=intent.recurrence,
+                )
+            )
+        else:
+            merged.append(intent)
+    return merged
 
 
 def _build_add_intent(raw_item: str, default_category: str | None = None) -> Intent:
@@ -125,6 +177,10 @@ def _build_add_intent(raw_item: str, default_category: str | None = None) -> Int
 
 
 async def parse_intents(text: str, settings: Settings) -> list[Intent]:
+    correction = _parse_correction_intents(text)
+    if correction:
+        return correction
+
     if settings.openrouter_api_key:
         try:
             intents = await _parse_with_openrouter(text, settings)
@@ -366,13 +422,13 @@ def _parse_clause_intents(normalized: str) -> list[Intent]:
 
     add_match = re.search(
         r"^(?:please |could u |could you |also |and )?"
-        r"(?:(?:add|put)\s+(.+?)\s+(?:to|on|off)\s+(?:the\s+)?(?:list|shopping list|todo list)\s*$|"
+        r"(?:(?:add|put)\s+(.+?)\s+(?:to|on|off)\s+(?:the\s+)?(?:list|shopping list|todo list|to-do list)\s*$|"
         r"need\s+(?:to get|more)\s+(.+?)$)",
         normalized,
     )
     if add_match:
         item = next(group for group in add_match.groups() if group)
-        return [_build_add_intent(item, default_category="shopping")]
+        return [_build_add_intent(item, default_category=_default_list_category(normalized))]
 
     task_add_match = re.match(
         r"^(?:please |could u |could you |also |and )?add\s+(.+)$",
@@ -407,12 +463,13 @@ def _parse_with_rules(text: str) -> list[Intent]:
     structured = try_parse_structured_add(cleaned)
     if structured:
         item, due_date, category = structured
-        return [Intent(name="add_todo", item=item, due_date=due_date, category=category)]
+        intents = [Intent(name="add_todo", item=item, due_date=due_date, category=category)]
+        return _merge_due_dates(cleaned, intents)
 
-    if not re.match(r"^(?:add|put|remove|delete|show|list|what)", cleaned, re.IGNORECASE):
+    if not re.match(r"^(?:please |could u |could you |)?(?:add|put|remove|delete|show|list|what|i said|i meant)", cleaned, re.IGNORECASE):
         natural = try_parse_natural_add(cleaned)
         if natural:
-            return [
+            intents = [
                 Intent(
                     name="add_todo",
                     item=natural.item,
@@ -420,10 +477,12 @@ def _parse_with_rules(text: str) -> list[Intent]:
                     category=natural.category,
                 )
             ]
+            return _merge_due_dates(cleaned, intents)
 
     intents: list[Intent] = []
     for clause in _split_clauses(cleaned):
         normalized = clause.strip().lower().rstrip(".!?")
         intents.extend(_parse_clause_intents(normalized))
 
+    intents = _merge_due_dates(cleaned, intents)
     return intents or [Intent(name="unknown")]
