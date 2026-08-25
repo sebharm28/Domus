@@ -11,6 +11,7 @@ from domus.conversation_log import ConversationLog
 from domus.db import init_db, subscribe_chat
 from domus.food_db import init_food_tables
 from domus.lifecycle import notify_subscribed_chats
+from domus.private_mode import apply_private_mode
 from domus.router import route_message
 from domus.scheduler import start_morning_briefing_scheduler, start_reminder_scheduler
 
@@ -64,6 +65,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "• Domus, what's missing for dinner?\n"
         "• Domus, remind us every Tuesday to take out the trash\n"
         "• Domus, what should I eat for dinner?\n"
+        "• Domus, /private add pay rent by friday\n"
         "• Domus, thank you"
     )
 
@@ -76,13 +78,33 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     text = message.text.strip()
     chat = message.chat
     sender = message.from_user.full_name if message.from_user else "unknown"
+    reply_to_bot = bool(
+        message.reply_to_message
+        and message.reply_to_message.from_user
+        and message.reply_to_message.from_user.is_bot
+    )
 
-    if not has_wake_word(text):
+    has_private = bool(re.search(r"/private\b", text, re.IGNORECASE))
+    if not has_wake_word(text) and not (reply_to_bot and has_private):
         logger.debug("Ignored message without wake word from %s in chat %s", sender, chat.id)
         return
 
-    request = strip_wake_word(text)
-    logger.info("Wake word from %s in chat %s (%d chars): %r", sender, chat.id, len(request), request[:120])
+    if has_wake_word(text):
+        request = strip_wake_word(text)
+    else:
+        request = text.strip()
+
+    request, private_mode = apply_private_mode(request, reply_to_bot=reply_to_bot)
+    if private_mode:
+        logger.info("Private mode from %s in chat %s", sender, chat.id)
+
+    logger.info(
+        "Wake word from %s in chat %s (%d chars): %r",
+        sender,
+        chat.id,
+        len(request),
+        request[:120],
+    )
 
     settings = context.application.bot_data["settings"]
     conversation_log: ConversationLog = context.application.bot_data["conversation_log"]
@@ -90,7 +112,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     try:
         await message.chat.send_action(ChatAction.TYPING)
         reply = await asyncio.wait_for(
-            route_message(request, sender, settings),
+            route_message(request, sender, settings, private_mode=private_mode),
             timeout=MESSAGE_TIMEOUT_SECONDS,
         )
     except asyncio.TimeoutError:

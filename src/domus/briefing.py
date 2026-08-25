@@ -4,6 +4,7 @@ from pathlib import Path
 from domus import db, food_db
 from domus.dates import format_due_date
 from domus.meals import infer_meal_type
+from domus.shopping import format_shopping_display
 
 
 def build_daily_briefing(db_path: Path, today: date | None = None) -> str:
@@ -36,7 +37,7 @@ def build_daily_briefing(db_path: Path, today: date | None = None) -> str:
         lines.append("")
 
     if shopping:
-        preview = ", ".join(todo.text for todo in shopping[:5])
+        preview = ", ".join(format_shopping_display(todo) for todo in shopping[:5])
         extra = f" (+{len(shopping) - 5} more)" if len(shopping) > 5 else ""
         lines.append(f"Shopping list ({len(shopping)}): {preview}{extra}")
         lines.append("")

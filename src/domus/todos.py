@@ -3,6 +3,11 @@ from pathlib import Path
 from domus import db
 from domus.dates import format_due_date
 from domus.intents import Intent
+from domus.shopping import (
+    effective_quantity,
+    format_shopping_display,
+    parse_item_quantity,
+)
 from domus.briefing import handle_daily_briefing
 from domus.meals import (
     handle_log_meal,
@@ -32,13 +37,96 @@ def format_todo_list(todos: list[db.Todo]) -> str:
         lines.append(f"\n{category.title()}:")
         for todo in grouped[category]:
             due = format_due_date(todo.due_date)
-            lines.append(f"• {todo.text} — due: {due}")
+            label = format_shopping_display(todo) if todo.category == "shopping" else todo.text
+            lines.append(f"• {label} — due: {due}")
     return "\n".join(lines)
 
 
 def _format_added(todo: db.Todo) -> str:
     due = format_due_date(todo.due_date)
-    return f'Added "{todo.text}" ({todo.category}, due: {due}).'
+    label = format_shopping_display(todo) if todo.category == "shopping" else todo.text
+    return f'Added "{label}" ({todo.category}, due: {due}).'
+
+
+def _add_or_merge_todo(
+    db_path: Path,
+    item: str,
+    created_by: str,
+    *,
+    due_date: str | None,
+    category: str,
+) -> str:
+    item_name, quantity = parse_item_quantity(item)
+    add_qty = quantity if quantity is not None else 1
+    if category == "shopping":
+        existing = db.find_open_shopping_match(db_path, item_name)
+        if existing:
+            new_qty = effective_quantity(existing) + add_qty
+            updated = db.update_todo(
+                db_path,
+                existing.id,
+                text=item_name,
+                quantity=new_qty,
+            )
+            label = format_shopping_display(updated)
+            return f'Updated to {label} on the shopping list.'
+
+    todo = db.add_todo(
+        db_path,
+        item_name,
+        created_by,
+        due_date=due_date,
+        category=category,
+        quantity=add_qty if category == "shopping" else None,
+    )
+    return _format_added(todo)
+
+
+def format_export_list(
+    db_path: Path,
+    *,
+    export_format: str = "text",
+    category: str | None = None,
+) -> str:
+    todos = db.list_open_todos(db_path, category=category)
+    if not todos:
+        label = f"{category} list" if category else "list"
+        return f"The {label} is empty."
+
+    if export_format == "csv":
+        lines = ["item,quantity,category"]
+        for todo in todos:
+            if todo.category == "shopping":
+                name, _ = parse_item_quantity(todo.text)
+                qty = effective_quantity(todo)
+                lines.append(f"{name},{qty},{todo.category}")
+            else:
+                lines.append(f'"{todo.text}",,{todo.category}')
+        return "\n".join(lines)
+
+    grouped: dict[str, list[db.Todo]] = {}
+    for todo in todos:
+        grouped.setdefault(todo.category, []).append(todo)
+
+    lines = [f"Open items ({len(todos)}):"]
+    for cat in sorted(grouped):
+        lines.append(f"\n{cat.title()}:")
+        for todo in grouped[cat]:
+            label = format_shopping_display(todo) if todo.category == "shopping" else todo.text
+            due = format_due_date(todo.due_date)
+            if todo.due_date:
+                lines.append(f"• {label} — due: {due}")
+            else:
+                lines.append(f"• {label}")
+    return "\n".join(lines)
+
+
+def handle_clear_shopping_list(db_path: Path) -> str:
+    count = db.clear_shopping_list(db_path)
+    if count == 0:
+        return "The shopping list is already empty."
+    noun = "item" if count == 1 else "items"
+    return f"Cleared {count} {noun} from the shopping list."
 
 
 def handle_intents(intents: list[Intent], db_path: Path, created_by: str) -> str:
@@ -62,6 +150,8 @@ def handle_intents(intents: list[Intent], db_path: Path, created_by: str) -> str
         "• add milk to the list\n"
         "• add pay rent by friday category admin\n"
         "• show me the shopping list\n"
+        "• export the list\n"
+        "• clear the shopping list\n"
         "• remove milk from the list\n"
         "• what should I eat for dinner?\n"
         "• let's make curry with rice tonight\n"
@@ -86,6 +176,8 @@ def handle_intent(intent: Intent, db_path: Path, created_by: str) -> str:
             "• add milk to the list\n"
             "• add pay rent by friday category admin\n"
             "• show me the shopping list\n"
+            "• export the list\n"
+            "• clear the shopping list\n"
             "• remove milk from the list\n"
             "• check off milk\n"
             "• what should I eat for dinner?\n"
@@ -99,6 +191,17 @@ def handle_intent(intent: Intent, db_path: Path, created_by: str) -> str:
 
     if intent.name == "list_todos":
         return format_todo_list(db.list_open_todos(db_path))
+
+    if intent.name == "export_list":
+        export_format = "csv" if (intent.item or "").lower() == "csv" else "text"
+        return format_export_list(
+            db_path,
+            export_format=export_format,
+            category=intent.category,
+        )
+
+    if intent.name == "clear_shopping_list":
+        return handle_clear_shopping_list(db_path)
 
     if intent.name == "daily_briefing":
         return handle_daily_briefing(db_path)
@@ -139,14 +242,13 @@ def handle_intent(intent: Intent, db_path: Path, created_by: str) -> str:
     if intent.name == "add_todo":
         if not intent.item:
             return "What should I add?"
-        todo = db.add_todo(
+        return _add_or_merge_todo(
             db_path,
             intent.item,
             created_by,
             due_date=intent.due_date,
             category=intent.category or "general",
         )
-        return _format_added(todo)
 
     if intent.name == "complete_todo":
         if not intent.item:

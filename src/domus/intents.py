@@ -23,6 +23,8 @@ IntentName = Literal[
     "remove_todo",
     "update_todo",
     "list_todos",
+    "export_list",
+    "clear_shopping_list",
     "suggest_meal",
     "log_meal",
     "plan_meal",
@@ -45,6 +47,8 @@ VALID_INTENTS = {
     "remove_todo",
     "update_todo",
     "list_todos",
+    "export_list",
+    "clear_shopping_list",
     "suggest_meal",
     "log_meal",
     "plan_meal",
@@ -74,7 +78,7 @@ class Intent:
 SYSTEM_PROMPT = """You parse household assistant commands for a Telegram bot.
 Users write in casual, messy natural language — typos and unclear phrasing are normal.
 Return ONLY valid JSON with this shape:
-{"intents":[{"intent":"add_todo|complete_todo|remove_todo|update_todo|list_todos|suggest_meal|log_meal|plan_meal|plan_week|show_meal_plan|missing_ingredients|add_recurring_reminder|list_reminders|remove_reminder|daily_briefing|help|greeting|thanks|unknown","item":string|null,"due_date":"YYYY-MM-DD"|null,"category":"shopping|household|admin|maintenance|personal|general"|null,"recurrence":"daily|weekly:monday|monthly:1"|null}, ...]}
+{"intents":[{"intent":"add_todo|complete_todo|remove_todo|update_todo|list_todos|export_list|clear_shopping_list|suggest_meal|log_meal|plan_meal|plan_week|show_meal_plan|missing_ingredients|add_recurring_reminder|list_reminders|remove_reminder|daily_briefing|help|greeting|thanks|unknown","item":string|null,"due_date":"YYYY-MM-DD"|null,"category":"shopping|household|admin|maintenance|personal|general"|null,"recurrence":"daily|weekly:monday|monthly:1"|null}, ...]}
 
 Rules:
 - Interpret intent generously from context; do not require exact command wording.
@@ -84,6 +88,8 @@ Rules:
 - remove_todo: remove an item from the list without marking done
 - update_todo: fix the due date or focus on a recent task (e.g. "I said the task is for tomorrow", "I meant going to the bank")
 - list_todos: show open items
+- export_list: export the list as plain text or CSV (item field "csv" for CSV format)
+- clear_shopping_list: wipe all open shopping items
 - suggest_meal: user asks what to eat, meal ideas, dinner/breakfast suggestions
 - log_meal: user says what they ate (e.g. "I had pasta for dinner")
 - plan_meal: user decides to cook something (e.g. "let's make curry with rice tonight") — add missing ingredients to shopping list
@@ -176,21 +182,42 @@ def _build_add_intent(raw_item: str, default_category: str | None = None) -> Int
     )
 
 
-async def parse_intents(text: str, settings: Settings) -> list[Intent]:
+def _rules_resolve(text: str) -> list[Intent]:
     correction = _parse_correction_intents(text)
     if correction:
         return correction
+    return _parse_with_rules(text)
+
+
+def _has_actionable_intent(intents: list[Intent]) -> bool:
+    return bool(intents) and not all(intent.name == "unknown" for intent in intents)
+
+
+async def parse_intents(
+    text: str,
+    settings: Settings,
+    *,
+    private_mode: bool = False,
+) -> list[Intent]:
+    rule_intents = _rules_resolve(text)
+    if _has_actionable_intent(rule_intents):
+        logger.info("Rules parsed %d intent(s) for %r", len(rule_intents), text)
+        return rule_intents
+
+    if private_mode:
+        logger.info("Private mode: skipping OpenRouter for %r", text)
+        return rule_intents or [Intent(name="unknown")]
 
     if settings.openrouter_api_key:
         try:
             intents = await _parse_with_openrouter(text, settings)
-            if intents and not all(intent.name == "unknown" for intent in intents):
+            if intents and _has_actionable_intent(intents):
                 logger.info("OpenRouter parsed %d intent(s) for %r", len(intents), text)
                 return intents
-            logger.warning("OpenRouter returned unknown; using fallback rules for %r", text)
+            logger.warning("OpenRouter returned unknown; using rules for %r", text)
         except Exception:
-            logger.exception("OpenRouter intent parsing failed; using fallback rules")
-    return _parse_with_rules(text)
+            logger.exception("OpenRouter intent parsing failed; using rules")
+    return rule_intents
 
 
 def _parse_json_content(content: str) -> dict | list:
@@ -370,6 +397,20 @@ def _parse_clause_intents(normalized: str) -> list[Intent]:
     ):
         query = _extract_missing_meal_query(normalized) or normalized
         return [Intent(name="missing_ingredients", item=query)]
+
+    if re.search(
+        r"(?:clear|wipe|empty)\s+(?:the\s+)?(?:shopping\s+)?list",
+        normalized,
+    ):
+        return [Intent(name="clear_shopping_list")]
+
+    if re.search(
+        r"export(?: the)?(?: shopping)? list|download(?: the)? list|print(?: the)? list",
+        normalized,
+    ):
+        export_format = "csv" if "csv" in normalized else "text"
+        category = "shopping" if "shopping" in normalized else None
+        return [Intent(name="export_list", item=export_format, category=category)]
 
     if re.search(
         r"(?:show(?: me)?(?: everything| the)?(?: on)?(?: the)? (?:list|shopping list|todo list|tasks)|"

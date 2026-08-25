@@ -1,3 +1,4 @@
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -14,6 +15,7 @@ class Todo:
     category: str
     reminder_sent: bool
     created_at: str
+    quantity: int | None = None
 
 
 @dataclass(frozen=True)
@@ -38,6 +40,19 @@ def _migrate_todos(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE todos ADD COLUMN category TEXT NOT NULL DEFAULT 'shopping'")
     if "reminder_sent" not in columns:
         conn.execute("ALTER TABLE todos ADD COLUMN reminder_sent INTEGER NOT NULL DEFAULT 0")
+    if "quantity" not in columns:
+        conn.execute("ALTER TABLE todos ADD COLUMN quantity INTEGER")
+        quantity_prefix = re.compile(r"^(\d+)\s+(.+)$")
+        rows = conn.execute(
+            "SELECT id, text FROM todos WHERE category = 'shopping'"
+        ).fetchall()
+        for row in rows:
+            match = quantity_prefix.match(row["text"].strip())
+            if match:
+                conn.execute(
+                    "UPDATE todos SET quantity = ?, text = ? WHERE id = ?",
+                    (int(match.group(1)), match.group(2).strip(), row["id"]),
+                )
 
 
 def _migrate_reminders(conn: sqlite3.Connection) -> None:
@@ -58,6 +73,7 @@ def init_db(db_path: Path) -> None:
                 due_date TEXT,
                 category TEXT NOT NULL DEFAULT 'general',
                 reminder_sent INTEGER NOT NULL DEFAULT 0,
+                quantity INTEGER,
                 created_at TEXT NOT NULL
             );
 
@@ -96,6 +112,9 @@ def init_db(db_path: Path) -> None:
 
 
 def _row_to_todo(row: sqlite3.Row) -> Todo:
+    quantity = None
+    if "quantity" in row.keys() and row["quantity"] is not None:
+        quantity = int(row["quantity"])
     return Todo(
         id=row["id"],
         text=row["text"],
@@ -105,6 +124,7 @@ def _row_to_todo(row: sqlite3.Row) -> Todo:
         category=row["category"] if "category" in row.keys() else "general",
         reminder_sent=bool(row["reminder_sent"]) if "reminder_sent" in row.keys() else False,
         created_at=row["created_at"],
+        quantity=quantity,
     )
 
 
@@ -134,15 +154,16 @@ def add_todo(
     *,
     due_date: str | None = None,
     category: str = "general",
+    quantity: int | None = None,
 ) -> Todo:
     now = datetime.now(timezone.utc).isoformat()
     with connect(db_path) as conn:
         cursor = conn.execute(
             """
-            INSERT INTO todos (text, created_by, due_date, category, created_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO todos (text, created_by, due_date, category, quantity, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (text.strip(), created_by, due_date, category, now),
+            (text.strip(), created_by, due_date, category, quantity, now),
         )
         todo_id = cursor.lastrowid
         row = conn.execute("SELECT * FROM todos WHERE id = ?", (todo_id,)).fetchone()
@@ -247,6 +268,7 @@ def update_todo(
     *,
     due_date: str | None = None,
     text: str | None = None,
+    quantity: int | None = None,
 ) -> Todo:
     fields: list[str] = []
     params: list[str | int] = []
@@ -257,6 +279,9 @@ def update_todo(
     if text is not None:
         fields.append("text = ?")
         params.append(text.strip())
+    if quantity is not None:
+        fields.append("quantity = ?")
+        params.append(quantity)
     if not fields:
         raise ValueError("Nothing to update")
 
@@ -268,6 +293,17 @@ def update_todo(
         )
         row = conn.execute("SELECT * FROM todos WHERE id = ?", (todo_id,)).fetchone()
     return _row_to_todo(row)
+
+
+def find_open_shopping_match(db_path: Path, item_text: str) -> Todo | None:
+    from domus.shopping import shopping_item_name
+
+    normalized = item_text.strip().lower()
+    for todo in list_open_todos(db_path, category="shopping"):
+        existing = shopping_item_name(todo).lower()
+        if normalized == existing or normalized in existing or existing in normalized:
+            return todo
+    return None
 
 
 def find_open_todos_partial(db_path: Path, item_text: str) -> list[Todo]:

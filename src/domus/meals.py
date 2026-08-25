@@ -4,6 +4,7 @@ from pathlib import Path
 
 from domus import db, food_db
 from domus.db import list_open_todos
+from domus.shopping import format_shopping_display, shopping_item_name
 
 
 def infer_meal_type(text: str) -> str | None:
@@ -27,7 +28,7 @@ def infer_meal_type(text: str) -> str | None:
 
 def _shopping_items(db_path: Path) -> set[str]:
     todos = list_open_todos(db_path, category="shopping")
-    return {todo.text.lower() for todo in todos}
+    return {shopping_item_name(todo).lower() for todo in todos}
 
 
 def _has_ingredient(ingredient: str, shopping_items: set[str]) -> bool:

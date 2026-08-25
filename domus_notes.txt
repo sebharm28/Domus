@@ -1,0 +1,609 @@
+DOMUS — NOTES & FEATURE GUIDE
+=============================
+
+Project notes, feature documentation, and planning discussions for Domus.
+(Filename: domus_notes.txt — formerly domus_features.txt)
+
+Domus is a Telegram household assistant for a shared group chat (two users,
+two apartments). Messages must start with the wake word "Domus" so the bot
+knows when to respond. The bot uses OpenRouter for natural-language intent
+parsing when an API key is set, and falls back to built-in rules otherwise.
+Data is stored locally in SQLite (data/domus.db).
+
+
+HOW TO TALK TO DOMUS
+--------------------
+Every command starts with "Domus" in the group chat, for example:
+  Domus, add milk to the list
+
+Social / meta:
+  Domus, hello
+  Domus, thank you
+  Domus, help
+  /start and /help also work as Telegram commands (no wake word needed).
+
+
+================================================================================
+IMPLEMENTED FEATURES
+================================================================================
+
+
+1. SHARED TO-DO & SHOPPING LIST
+-------------------------------
+Add, list, complete, and remove tasks. Items are shared for everyone in the
+group chat. Tasks can have categories and due dates.
+
+Categories: shopping, household, admin, maintenance, personal, general
+(shopping is inferred automatically for grocery-style items).
+
+Examples:
+  Domus, add milk to the list
+  Domus, add 2 milk to the list
+  Domus, we need butter and eggs
+  Domus, add pay rent by friday category admin
+  Domus, please add going to the bank to the todo list. Have to do it tomorrow
+  Domus, what's on the list?
+  Domus, show me the shopping list
+  Domus, export the list
+  Domus, export the shopping list as csv
+  Domus, clear the shopping list
+  Domus, check off milk
+  Domus, I bought the milk
+  Domus, remove milk from the list
+  Domus, we do not need butter anymore
+
+Shopping quantities:
+  - "add 2 milk" stores item name (milk) and quantity (2) separately in SQLite
+  - Lists show "2× milk" when quantity > 1
+  - Adding the same item again merges lines and bumps quantity (milk + milk → 2× milk;
+    milk + 2 milk → 3× milk)
+
+Todo-list adds infer category from the task (e.g. "going to the bank" → admin).
+Shopping-list adds still default to category shopping.
+
+
+1b. TASK CORRECTIONS (update_todo)
+----------------------------------
+Fix a recent task when you misspoke or the bot misunderstood — handled by
+rules (not OpenRouter) so corrections are reliable.
+
+Examples:
+  Domus, I said the task is for tomorrow
+  Domus, I meant going to the bank
+  Domus, have to do it tomorrow
+
+What happens:
+  - Sets due date on the most recent open task (or a matching task by name)
+  - "I meant …" also removes obvious mistaken entries (e.g. bad LLM adds)
+  - Resets reminder_sent when the due date changes
+
+
+2. ONE-TIME DUE-DATE REMINDERS
+------------------------------
+Tasks with a due date trigger an automatic Telegram reminder on or before
+that date. Each task is reminded once (reminder_sent flag).
+
+Examples:
+  Domus, add call landlord by tomorrow category admin
+  (Scheduler checks every 60 seconds and notifies subscribed chats.)
+
+
+3. RECURRING REMINDERS
+----------------------
+Repeating household reminders run on a schedule without LLM cost. Supported
+patterns: daily, weekly (by weekday), monthly (by day of month).
+
+Examples:
+  Domus, remind us every Tuesday to take out the trash
+  Domus, remind me on the 1st of each month to pay rent
+  Domus, remind us daily to water the plants
+  Domus, list recurring reminders
+  Domus, remove the take out the trash reminder
+
+After a recurring reminder fires, the next due date is calculated automatically
+(e.g. next Tuesday, next month on the 1st).
+
+
+4. DAILY BRIEFING
+-----------------
+On-demand summary of the day, plus an automatic morning briefing at 08:00
+(local time, configurable via BRIEFING_HOUR in .env).
+
+The briefing includes:
+  - Tasks due today
+  - Overdue tasks
+  - Shopping list preview
+  - Other open tasks (up to 3)
+  - A meal idea for the current time of day
+
+Examples:
+  Domus, what's on today?
+  Domus, daily briefing
+  Domus, what do I need to do today?
+
+
+5. MEAL SUGGESTIONS
+-------------------
+Suggests meals from a built-in food database (18 seeded dishes). Avoids meals
+eaten in the last 2 days. Shows prep time, notes, and which ingredients you
+already have on the shopping list.
+
+Examples:
+  Domus, what should I eat for dinner?
+  Domus, what can I eat for lunch?
+  Domus, meal idea
+
+
+6. COOK THIS → UPDATE SHOPPING LIST (plan_meal)
+-----------------------------------------------
+Pick a meal and Domus adds only the missing ingredients to the shopping list.
+
+Examples:
+  Domus, let's make curry with rice tonight
+  Domus, I want to cook shakshuka
+  Domus, make pasta aglio e olio
+
+Reply example:
+  Planning "Curry with rice": Added to the shopping list: coconut milk, curry
+  paste. You already have: rice, vegetables.
+
+
+7. WEEKLY MEAL PLAN
+-------------------
+Plans one dinner per remaining day from today through Sunday. Saves the plan,
+shows it on request, and adds all missing ingredients for the week to the
+shopping list (deduplicated).
+
+Examples:
+  Domus, plan meals for this week
+  Domus, show the meal plan
+  Domus, what's the meal plan this week?
+
+
+8. WHAT'S MISSING FOR DINNER?
+-----------------------------
+Read-only check: compares a meal's ingredients against the open shopping list
+without adding anything.
+
+Examples:
+  Domus, what's missing for pasta aglio e olio?
+  Domus, what's missing for dinner?
+  (If no meal is named, uses tonight's planned meal from the weekly plan.)
+
+
+9. LOG MEALS
+------------
+Remembers what you ate so suggestions vary over time.
+
+Examples:
+  Domus, I had pasta for dinner
+  Domus, we ate shakshuka
+
+
+10. CONVERSATION LOGS
+---------------------
+Each bot session writes an append-only log to logs/session_YYYY-MM-DD_HH-MM-SS.log
+(format: timestamp, user message — bot response). Logs are gitignored.
+
+
+11. LIFECYCLE MESSAGES
+----------------------
+When the bot starts:  "Hi, I am awake and ready."
+When the bot stops:   "Goodbye, I am going to sleep now."
+(Sent to all subscribed group chats.)
+
+
+12. INFRASTRUCTURE (behind the scenes)
+--------------------------------------
+  - Telegram polling (no public server required)
+  - SQLite database with tables: todos, reminders, foods, meal_history,
+    meal_plans, notification_chats (+ unused schema for meals, expenses)
+  - APScheduler via python-telegram-bot job queue:
+      * due-date reminders every 60s
+      * recurring reminders every 60s
+      * morning briefing daily at BRIEFING_HOUR (default 8)
+  - Intent routing: rules first; OpenRouter only when rules return unknown
+  - /private prefix or reply-to-bot → rules-only (no OpenRouter that turn)
+  - Regex / rule-based fallback when OpenRouter is unavailable
+  - Unit tests for intent parsing (tests/test_intents.py)
+  - 45-second message timeout with user-friendly error
+  - Long replies split at Telegram's 4096-character limit
+
+
+12b. PRIVATE MODE & PRIVACY ROUTING
+-----------------------------------
+Skip OpenRouter for sensitive messages — local rules only.
+
+  Domus, /private add doctor appointment friday
+  (or reply to a Domus message with /private … — wake word optional on reply)
+
+Duplicate shopping items merge instead of piling up — quantities bump on repeat
+adds ("milk" twice → 2× milk; "2 milk" on existing milk → 3× milk).
+
+
+RECENT IMPROVEMENTS (from session log review, Aug 2026)
+-------------------------------------------------------
+Fixed issues seen in logs/session_2026-08-23_17-58-07.log:
+
+  1. "add … to the todo list. Have to do it tomorrow" now picks up tomorrow
+     from the second sentence and sets the correct due date.
+
+  2. Todo-list adds no longer default to category "shopping" — errands like
+     "going to the bank" are categorized as admin.
+
+  3. "I said the task is for tomorrow" is handled as update_todo instead of
+     triggering a hallucinated new task from OpenRouter few-shot examples.
+
+  4. "I meant going to the bank" clarifies the intended task and removes
+     mistaken entries when possible.
+
+  5. Removed misleading few-shot example from the OpenRouter system prompt;
+     corrections are parsed by rules before the LLM is consulted.
+
+
+================================================================================
+PRIORITY BACKLOG — PRIVACY, NLP & MEMORY (discussion Aug 2026)
+================================================================================
+Shortlist for next implementation waves. Decisions below reflect Sebastian's
+answers; open items marked TBD.
+
+
+1. PRIVATE MODE (/private prefix or reply)
+   DECIDED: Use a /private prefix or reply mode — not just the word "private"
+   somewhere in the message. When active, that turn skips OpenRouter entirely
+   (rules-only parsing). Both forms:
+     Domus, /private add doctor appointment friday
+     (reply to a Domus message with Domus, /private … or /private …)
+
+
+2. RULES FIRST, THEN OPENROUTER
+   DECIDED: Always run rule-based parsing first. If rules cannot resolve the
+   message, pass it to OpenRouter. (Corrections already bypass the LLM today;
+   this extends that pattern to all intents.)
+
+   OPEN: If rules return a confident match, still call OpenRouter or skip it?
+   DECIDED: Skip OpenRouter when rules succeed. OpenRouter only when rules
+   return unknown or no actionable intent.
+
+
+3. REDACTION LAYER BEFORE LLM
+   DECIDED (long term): Configurable redaction patterns in .env (names,
+   amounts, etc.) before text is sent to OpenRouter. Not required for v1 of
+   the privacy pass — design with .env-driven patterns in mind.
+
+
+4. OPENROUTER JSON HARDENING
+   TBD — Sebastian currently unsure. Leaning toward a second LLM call to repair
+   invalid JSON rather than only local string repair. Revisit after rules-first
+   routing is in place and we can measure how often JSON still fails.
+
+
+5. CLARIFY + CONVERSATION MEMORY ("brain")
+   DECIDED: Prefer remembering context for the next message(s), not just
+   one-shot clarifications. Broader vision: Domus should have a "brain" —
+   structured memory in SQLite (not just raw chat logs). This is the main
+   reason behind persisting data locally.
+
+   LOOKUP LATER (Phase 2 memory design):
+     - Per-chat / per-user short-term context (last intent, pending clarification)
+     - Long-term user facts (preferences, apartment, dietary needs)
+     - How much history to inject into OpenRouter vs. keep local-only
+     - Relationship to conversation logs (logs/ — local only, never GitHub)
+
+
+6. NATURAL-LANGUAGE TASK EDITS (no technical syntax)
+   DECIDED: All edits must work in plain natural language. No required command
+   structure like "edit … due …" — important for non-technical users.
+   Examples should feel conversational:
+     "Domus, actually that's due tomorrow"
+     "Domus, rename that to pay rent"
+     "Domus, I meant the bank thing, not the other task"
+
+
+7. PER-USER PROFILES
+   DECIDED: Domus should remember who wrote which message and store information
+   about each person (Telegram identity + learned preferences), not just one
+   shared household profile. Ties into diet filter, assignment, and stats.
+
+   v1 candidate fields: telegram user id, display name, apartment, dietary
+   prefs (vegetarian, allergies, dislikes).
+
+   OPEN FOR SEBASTIAN: Which profile fields matter most day-to-day? What else
+   should Domus remember about each person? (See HUMAN OPEN TOPICS below.)
+
+
+8. DUPLICATE DETECTION / MERGE (shopping)
+   DONE — quantity column in SQLite; repeat adds bump quantity (rules-only).
+
+
+9. VOICE MESSAGE INPUT
+   WANTED — DEFERRED. Include in roadmap; do not implement now. Whisper via
+   OpenRouter or local model; privacy implications to decide when picked up.
+
+
+10. AUTOMATED INTENT PARSING TESTS
+    DECIDED: Yes. Golden-file tests from real log phrases (including session
+    logs). Logs themselves stay local — see "Repository hygiene" below.
+
+
+Repository hygiene
+------------------
+  - logs/ and data/ are gitignored — conversation logs and SQLite must NEVER
+    be pushed to GitHub.
+  - Test fixtures should use anonymised/synthetic phrases inspired by logs,
+    not copy raw log files into the repo.
+
+
+================================================================================
+IMPLEMENTATION WAVE 1 (completed — Aug 2026)
+================================================================================
+First coding chunk before wave 2 (profiles, memory, redaction, JSON LLM):
+
+  [x] /private prefix + reply-to-bot mode (rules-only, no OpenRouter)
+  [x] Rules-first routing — OpenRouter only when rules return unknown
+  [x] Automated intent parsing tests (tests/test_intents.py, unittest)
+  [x] Shopping duplicate detection / merge on add_todo (wave 1)
+  [x] Shopping quantities, export list, clear list (wave 1b — Aug 2026)
+
+Run tests: PYTHONPATH=src python -m unittest discover -s tests
+
+Wave 2 (later):
+  - Per-user profiles (#7)
+  - Short-term conversation context / "brain" (#5)
+  - Natural-language task edits beyond update_todo (#6)
+  - Redaction patterns in .env (#3)
+  - OpenRouter JSON second-LLM repair (#4 — TBD)
+  - Voice input (#9 — deferred)
+
+
+================================================================================
+LANGUAGE — GERMAN SUPPORT (planning note)
+================================================================================
+Domus must eventually understand and respond in German. You use English in
+the group chat for now while the bot is being built; German comes later. This
+section records how to approach it without a big-bang rewrite.
+
+
+Current state
+-------------
+  - Wake word stays "Domus" (same in both languages).
+  - Rule-based parsing is English-only (regex, few-shot examples, help text).
+  - OpenRouter prompts are English; the model can often parse simple German
+    input anyway, but rules-first routing will miss most German phrasing
+    until we add parallel patterns.
+  - Replies from Domus are English (hardcoded strings in todos.py, meals.py,
+    briefing.py, etc.).
+
+
+Recommended approach (when we pick it up)
+-----------------------------------------
+  Phase A — Understand German input (keep English replies)
+    - Duplicate critical regex/intent paths for German equivalents, e.g.:
+        "füge Milch zur Liste hinzu" / "wir brauchen Butter"
+        "was steht heute an?" / "was fehlt zum Abendessen?"
+        "erinnere uns jeden Dienstag an die Mülltonne"
+    - Extend OpenRouter SYSTEM_PROMPT with German few-shot examples.
+    - Add German test fixtures alongside English in tests/test_intents.py.
+    - Optional: detect language per message (simple keyword/heuristic) and
+      route to a German rule set without mixing languages in one regex.
+
+  Phase B — German replies
+    - Extract user-facing strings into a small i18n layer (en/de JSON or
+      Python dicts) — one place for "Added …", briefing headers, errors.
+    - Choose default reply language: per-chat setting in SQLite, or mirror
+      the language of the user's message, or household default "de".
+
+  Phase C — German + voice together
+    - Whisper (or similar) transcribes German audio → same intent pipeline.
+    - Confirm transcription language; post-process German umlauts and
+      compound words ("Einkaufsliste", "Müll rausbringen").
+    - See HUMAN OPEN TOPICS → Voice & audio for open decisions.
+
+What stays English for now (explicit)
+-------------------------------------
+  - Code, logs, commit messages, domus_notes.txt (dev docs).
+  - Bot replies and /help examples until Phase B.
+  - You may still write Domus in English in Telegram — rules cover that today.
+  - Mixed DE/EN in one household is OK short-term; document preferred habit.
+
+
+================================================================================
+HUMAN OPEN TOPICS (for Sebastian to decide later)
+================================================================================
+Things the bot can build once you have a preference — no rush:
+
+  User profiles (#7)
+    - Which fields are must-have vs nice-to-have?
+    - One shared group profile vs separate prefs per person?
+    - Should apartment A/B be a tag, category, or separate lists?
+
+  Memory / "brain" (#5)
+    - How many turns of context feel right (1? 3? whole session)?
+    - What should never be remembered (private messages, medical, etc.)?
+
+  OpenRouter JSON repair (#4)
+    - Second LLM call vs stricter local validation only — still unsure
+
+  Relative reminders (#planned #5)
+    - Max horizon? ("in 2 hours" only or also "in 3 days"?)
+
+  Quiet hours (#planned #6)
+    - Exact times for your household (22:00–07:00 default?)
+
+  Location / two apartments (#person-context #4)
+    - Naming: apartment A/B, your names, or addresses?
+
+  Language — German (#language section)
+    - When to switch household chat to German vs keep English?
+    - Reply language: always German, or match whatever you wrote?
+    - Mixed DE/EN messages from you and your girlfriend — one default enough?
+
+  Voice & audio (#9 + German)
+    - Whisper via OpenRouter vs local model on Pi (privacy + cost)
+    - Primary language for transcription: de-DE only, or de + en auto-detect?
+    - Voice without wake word ("Domus" in text) — require wake word in audio?
+    - Should voice notes default to /private (no cloud LLM on transcript)?
+    - Telegram sends OGG/opus — confirm pipeline before building
+
+
+###planned
+------------
+Small, quick additions — high everyday value, minimal scope:
+
+
+Shopping & list hygiene — DONE (Aug 2026)
+  [x] 1. Quantities on shopping items (SQLite quantity column + "2× milk" display)
+  [x] 2. Duplicate detection / merge with quantity bump
+  [x] 3. Export the list (plain text or CSV)
+  [x] 4. Clear / wipe shopping list
+
+
+Reminders & timing
+  5. RELATIVE REMINDERS (short-term)
+     "Domus, remind me in 2 hours" / "in 30 minutes" — for spontaneous things
+     ("oven is on"). Currently only date/weekday-based (tomorrow, every
+     Tuesday). Needs one-off scheduler jobs via PTB job_queue.
+
+  6. QUIET HOURS
+     No reminder pushes between e.g. 22:00–07:00; batch them into the next
+     morning briefing instead. Configurable in .env. Especially important in
+     a shared Telegram group.
+
+  7. SNOOZE A REMINDER
+     "Domus, snooze pay rent until tomorrow" — bump due_date + reset
+     reminder_sent for one-time todos; push next_due for recurring.
+
+
+Corrections & UX
+  8. UNDO LAST ACTION
+     "Domus, undo" reverts the last add/remove/complete. With two users in
+     one chat, typos happen easily — "I meant …" is the only correction path
+     today. Needs a small action log (last N operations per chat).
+
+  9. SHOW ONLY ONE CATEGORY
+     "Domus, show admin tasks" / "what's on the household list?" — filter
+     list_open_todos by category.
+
+
+Meals (quick wins)
+  10. ADD CUSTOM MEALS TO THE DATABASE
+      "Domus, add meal grilled cheese: bread, cheese, butter" — INSERT into
+      foods table; immediately usable for plan_meal and suggestions.
+
+
+Briefings & housekeeping
+  11. EVENING SUMMARY
+      Scheduled job at 20:00: tomorrow's due tasks + planned dinner from
+      meal plan. Mirror of morning briefing.
+
+  12. DONE WITH RECURRING TASK ACK
+      "Domus, done with trash" after a recurring reminder — optional log or
+      completion history.
+
+  13. DATABASE BACKUP ON SCHEDULE
+      Daily job: copy data/domus.db → data/backups/domus_YYYY-MM-DD.db
+
+
+Voice (medium effort — DEFERRED, see priority backlog #9)
+  14. VOICE MESSAGE INPUT
+      Transcribe Telegram voice notes (e.g. via Whisper on OpenRouter or a
+      local model) then route as normal text. Wanted later; not now.
+
+
+###planned — two users / two apartments (person-context)
+---------------------------------------------------------
+Domus serves two people in two apartments, but nothing tracks *who* did what
+or *where* a task belongs. These fill that gap:
+
+
+  1. ASSIGN TASKS TO A PERSON
+     "Domus, assign trash to me" / "assign rent to Sebastian". Store
+     assigned_to on todos; show in list and briefing output.
+
+  2. LOG WHO COMPLETED A TASK
+     When checking off, record completed_by + completed_at. Enables fairness
+     tracking and weekly stats.
+
+  3. "WHO DID WHAT" WEEKLY STATS
+     "Domus, who did what this week?" — summary of completions per person.
+     Often the actual friction point in shared households.
+
+  4. LOCATION / APARTMENT TAG
+     "Domus, add buy filter for apartment A" — bind tasks to a place so the
+     briefing and shopping list don't mix both households. Could be a location
+     field or a category extension (apartment_a / apartment_b / shared).
+
+
+WHAT IS MISSING OVERALL
+-----------------------
+
+MVP gaps (partially done):
+  [x] Shared to-do / shopping list
+  [x] Recurring reminders (daily / weekly / monthly)
+  [x] Meal planning (suggestions, weekly plan, recipe → shopping list)
+  [x] Status queries (daily briefing, missing ingredients)
+  [x] Basic edit/update for recent todos (update_todo)
+  [ ] Full weekly plan from Monday (currently: today → Sunday only)
+  [ ] Breakfast/lunch in weekly plan (dinners only)
+  [ ] Short-term relative reminders ("in 30 minutes") — see planned #5
+  [x] Shopping quantities and duplicate merge
+  [ ] Per-user assignment and completion tracking — see planned (person-context)
+  [ ] Location tag for two apartments — see planned (person-context)
+  [ ] "What's missing" without a named meal when no plan exists (falls back
+      to a random suggestion — could ask a clarifying question instead)
+
+Meals (gaps affecting suggest_meal + plan_week):
+  [ ] Diet / preference filter — per-user prefs (DECIDED — #7), affects both
+      suggest_meal and plan_week
+  [ ] User-added recipes (partially covered by planned #10)
+  [ ] Portion scaling — scale ingredient quantities when only one person is
+      eating (e.g. half a recipe, or "cooking for 1 tonight")
+
+Phase 2 (from dev brief — not started):
+  [ ] Expense splitting (schema exists: expenses table, no logic)
+  [ ] Schedule coordination (who stays where, visit planning)
+  [ ] Maintenance log (filters, batteries, repair appointments)
+  [ ] Proactive nudges ("filter not changed in 3 months")
+  [ ] Webhook hosting / Raspberry Pi 24/7 deployment (planned for later)
+  [ ] "Who did what" fairness / chore balance over longer periods
+
+Privacy & LLM usage:
+  [ ] Full message text sent to OpenRouter when key is set (only when rules fail)
+  [x] /private prefix or reply mode — rules-only for that message (DECIDED)
+  [x] Rules-first routing, then OpenRouter when rules fail (DECIDED)
+  [ ] Redaction layer — configurable patterns in .env (DECIDED, long term)
+  [ ] OpenRouter JSON repair via second LLM call (TBD — see priority backlog #4)
+  [ ] Conversation "brain" / multi-turn memory in SQLite (DECIDED — design later)
+
+Infrastructure & polish:
+  [ ] Automated SQLite backups — see planned #13
+  [ ] README still lists old "next up" items — should be updated
+  [x] Automated intent parsing tests from log-derived fixtures (DECIDED — #10)
+  [ ] OpenRouter JSON parsing still flaky on messy input (fallback rules help)
+  [ ] Old unused tables: meals (legacy schema), expenses (empty)
+  [ ] Natural-language task edits — no technical syntax required (DECIDED — #6)
+  [ ] Undo last action — see planned #8
+  [ ] Quiet hours for notifications — see planned #6
+  [x] Export list to text/CSV
+  [ ] Voice message transcription — DEFERRED (see priority backlog #9)
+  [ ] Per-user profiles — who said what, stored preferences (DECIDED — #7)
+  [x] Duplicate merge on shopping adds with quantity bump
+
+Cost & ops (from dev brief, not yet tracked in-app):
+  [ ] OpenRouter usage monitoring / cost alerts
+  [ ] Raspberry Pi setup for always-on bot (deferred by user)
+
+
+QUICK REFERENCE — ALL INTENTS
+------------------------------
+add_todo, complete_todo, remove_todo, update_todo, list_todos,
+export_list, clear_shopping_list,
+suggest_meal, log_meal, plan_meal, plan_week, show_meal_plan,
+missing_ingredients,
+add_recurring_reminder, list_reminders, remove_reminder,
+daily_briefing,
+help, greeting, thanks
+
+
+Last updated: 25 August 2026 (shopping list hygiene: quantities, export, clear)
+Branch: cursor/todo-list-openrouter-sqlite
