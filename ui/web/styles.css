@@ -277,8 +277,13 @@ body {
   border-radius: 12px;
   padding: 12px 14px;
   font-size: 14.5px;
-  background: #fff;
+  background: var(--surface);
+  color: var(--ink);
   outline: none;
+}
+
+.composer input::placeholder {
+  color: var(--ink-soft);
 }
 
 .composer input:focus {
@@ -320,6 +325,7 @@ body {
 .tile {
   position: relative;
   background: var(--surface-2);
+  color: var(--ink);
   border: 1px solid var(--line);
   border-radius: 14px;
   padding: 16px 12px 14px;
@@ -395,6 +401,7 @@ body {
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--surface-2);
+  color: var(--ink);
   cursor: pointer;
   transition: border-color 0.15s ease;
 }
