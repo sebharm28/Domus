@@ -69,6 +69,39 @@ class RecipeTests(unittest.TestCase):
         # De-duplicated case-insensitively.
         self.assertEqual(sorted(t.lower() for t in updated.tags), ["lunch", "quick"])
 
+    def test_update_recipe_full_replace(self) -> None:
+        recipe = food_db.add_recipe(
+            self.db_path,
+            "Old Name",
+            meal_type="lunch",
+            ingredient_details=[{"name": "bread", "amount": "2 slices"}],
+            tags=["quick"],
+        )
+        updated = food_db.update_recipe(
+            self.db_path,
+            recipe.id,
+            name="New Name",
+            meal_type="dinner",
+            ingredient_details=[{"name": "pasta", "amount": "200 g"}],
+            prep_time_min=15,
+            notes="Updated steps",
+            tags=["italian"],
+            author="Alex",
+            full_replace=True,
+        )
+        assert updated is not None
+        self.assertEqual(updated.name, "New Name")
+        self.assertEqual(updated.meal_type, "dinner")
+        self.assertEqual(updated.ingredients, ["pasta"])
+        self.assertEqual(updated.prep_time_min, 15)
+        self.assertIn("italian", [t.lower() for t in updated.tags])
+
+    def test_delete_recipe(self) -> None:
+        recipe = food_db.add_recipe(self.db_path, "Gone Soon", meal_type="dinner")
+        deleted = food_db.delete_recipe(self.db_path, recipe.id)
+        self.assertEqual(deleted, "Gone Soon")
+        self.assertIsNone(food_db.get_food(self.db_path, recipe.id))
+
     def test_list_tags_distinct(self) -> None:
         food_db.add_recipe(self.db_path, "Broth", meal_type="dinner", tags=["Soup"])
         tags = food_db.list_tags(self.db_path)

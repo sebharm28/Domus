@@ -421,43 +421,22 @@ function openRecipeDetail(id) {
     <ul class="ing-list">${details}</ul>
     <h4>Notes</h4>
     <div class="md" id="note-view">${mdToHtml(r.notes)}</div>
-    <div class="modal-actions">
-      <button class="btn link" id="edit-note">Edit notes</button>
+    <div class="modal-actions spread">
+      <button class="btn danger" id="delete-recipe">Delete</button>
+      <div class="modal-actions-right">
+        <button class="btn link" id="edit-recipe">Edit recipe</button>
+        <button class="btn primary" id="plan-recipe">Add missing to list</button>
+      </div>
     </div>
   `;
   modalEl.querySelector(".close").addEventListener("click", closeModal);
-  modalEl.querySelector("#edit-note").addEventListener("click", () => editNotes(r));
+  modalEl.querySelector("#edit-recipe").addEventListener("click", () => openRecipeForm(r));
+  modalEl.querySelector("#delete-recipe").addEventListener("click", () => deleteRecipe(r));
+  modalEl.querySelector("#plan-recipe").addEventListener("click", () => planRecipe(r.name));
   openModal();
 }
 
-function editNotes(r) {
-  const actions = modalEl.querySelector(".modal-actions");
-  const view = modalEl.querySelector("#note-view");
-  view.outerHTML = `<textarea class="note-editor" id="note-edit" placeholder="Write notes in markdown…"># ${r.name}\n</textarea>`;
-  const ta = modalEl.querySelector("#note-edit");
-  ta.value = r.notes || "";
-  ta.focus();
-  actions.innerHTML = `
-    <button class="btn" id="cancel-note">Cancel</button>
-    <button class="btn primary" id="save-note">Save notes</button>
-  `;
-  actions.querySelector("#cancel-note").addEventListener("click", () => openRecipeDetail(r.id));
-  actions.querySelector("#save-note").addEventListener("click", () => saveNotes(r.id, ta.value));
-}
-
-async function saveNotes(id, notes) {
-  try {
-    const data = await api("/api/recipes/update", { id, notes });
-    state.recipes = data.recipes || state.recipes;
-    state.tags = data.tags || state.tags;
-    openRecipeDetail(id); // re-render with saved markdown
-    toast("Notes saved.");
-  } catch (e) {
-    setConnected(false);
-  }
-}
-
-// ---- new recipe form ------------------------------------------------------
+// ---- recipe create / edit form --------------------------------------------
 function ingredientRow(name = "", amount = "") {
   const row = document.createElement("div");
   row.className = "ing-row";
@@ -470,53 +449,73 @@ function ingredientRow(name = "", amount = "") {
   return row;
 }
 
-function openNewRecipeForm() {
+function openRecipeForm(recipe = null) {
+  const editing = Boolean(recipe);
+  const customTags = editing
+    ? (recipe.tags || []).filter((t) => t.toLowerCase() !== (recipe.meal_type || "").toLowerCase())
+    : [];
+
   modalEl.innerHTML = `
     <div class="modal-head">
-      <h2>New recipe</h2>
+      <h2>${editing ? "Edit recipe" : "New recipe"}</h2>
       <button class="close" aria-label="Close">×</button>
     </div>
     <div class="form-grid">
-      <div class="field"><label>Name</label><input id="nr-name" placeholder="e.g. Pumpkin soup" /></div>
+      <div class="field"><label>Name</label><input id="nr-name" placeholder="e.g. Pumpkin soup" value="${editing ? escapeAttr(recipe.name) : ""}" /></div>
       <div class="field two">
         <div><label>Meal type</label>
           <select id="nr-type">
-            <option value="breakfast">Breakfast</option>
-            <option value="lunch">Lunch</option>
-            <option value="dinner" selected>Dinner</option>
-            <option value="snack">Snack</option>
+            ${["breakfast", "lunch", "dinner", "snack"].map((type) =>
+              `<option value="${type}"${(editing ? recipe.meal_type : "dinner") === type ? " selected" : ""}>${type[0].toUpperCase()}${type.slice(1)}</option>`
+            ).join("")}
           </select>
         </div>
-        <div><label>Prep time (min)</label><input id="nr-prep" type="number" min="0" placeholder="30" /></div>
+        <div><label>Prep time (min)</label><input id="nr-prep" type="number" min="0" placeholder="30" value="${editing && recipe.prep_time_min ? escapeAttr(String(recipe.prep_time_min)) : ""}" /></div>
       </div>
       <div class="field two">
-        <div><label>Tags (comma-separated)</label><input id="nr-tags" placeholder="e.g. soup, vegan" /></div>
-        <div><label>Author</label><input id="nr-author" placeholder="You" /></div>
+        <div><label>Tags (comma-separated)</label><input id="nr-tags" placeholder="e.g. soup, vegan" value="${editing ? escapeAttr(customTags.join(", ")) : ""}" /></div>
+        <div><label>Author</label><input id="nr-author" placeholder="You" value="${editing && recipe.author ? escapeAttr(recipe.author) : ""}" /></div>
       </div>
       <div class="field">
         <label>Ingredients &amp; amounts</label>
         <div class="ing-rows" id="nr-ings"></div>
         <button type="button" class="btn link" id="nr-add-ing">+ Add ingredient</button>
       </div>
-      <div class="field"><label>Notes (markdown)</label><textarea id="nr-notes" class="note-editor" placeholder="# Steps&#10;- Do this&#10;- Then that"></textarea></div>
+      <div class="field"><label>Notes (markdown)</label><textarea id="nr-notes" class="note-editor" placeholder="# Steps&#10;- Do this&#10;- Then that">${editing ? escapeHtml(recipe.notes || "") : ""}</textarea></div>
     </div>
     <div class="modal-actions">
-      <button class="btn" id="nr-cancel">Cancel</button>
-      <button class="btn primary" id="nr-save">Create recipe</button>
+      <button class="btn" id="nr-cancel">${editing ? "Back" : "Cancel"}</button>
+      <button class="btn primary" id="nr-save">${editing ? "Save changes" : "Create recipe"}</button>
     </div>
   `;
+
   const ings = modalEl.querySelector("#nr-ings");
-  ings.appendChild(ingredientRow());
-  ings.appendChild(ingredientRow());
+  const details = editing
+    ? (recipe.ingredient_details?.length
+        ? recipe.ingredient_details
+        : (recipe.ingredients || []).map((n) => ({ name: n, amount: "" })))
+    : [{ name: "", amount: "" }, { name: "", amount: "" }];
+  for (const item of details) {
+    ings.appendChild(ingredientRow(item.name, item.amount));
+  }
+  if (!details.length) ings.appendChild(ingredientRow());
+
   modalEl.querySelector("#nr-add-ing").addEventListener("click", () => ings.appendChild(ingredientRow()));
   modalEl.querySelector(".close").addEventListener("click", closeModal);
-  modalEl.querySelector("#nr-cancel").addEventListener("click", closeModal);
-  modalEl.querySelector("#nr-save").addEventListener("click", submitNewRecipe);
+  modalEl.querySelector("#nr-cancel").addEventListener("click", () => {
+    if (editing) openRecipeDetail(recipe.id);
+    else closeModal();
+  });
+  modalEl.querySelector("#nr-save").addEventListener("click", () => submitRecipeForm(recipe));
   openModal();
   modalEl.querySelector("#nr-name").focus();
 }
 
-async function submitNewRecipe() {
+function openNewRecipeForm() {
+  openRecipeForm(null);
+}
+
+async function submitRecipeForm(recipe) {
   const name = modalEl.querySelector("#nr-name").value.trim();
   if (!name) {
     toast("Please give the recipe a name.");
@@ -537,11 +536,41 @@ async function submitNewRecipe() {
     }))
     .filter((i) => i.name);
 
-  const payload = { name, meal_type, tags, author, notes, ingredients };
+  const payload = { name, meal_type, tags, author, notes, ingredients, full_replace: Boolean(recipe) };
   if (prepRaw) payload.prep_time_min = parseInt(prepRaw, 10);
+  else if (recipe) payload.prep_time_min = null;
+
+  const path = recipe ? "/api/recipes/update" : "/api/recipes/add";
+  if (recipe) payload.id = recipe.id;
 
   try {
-    const data = await api("/api/recipes/add", payload);
+    const data = await api(path, payload);
+    if (data.error) {
+      toast(data.error);
+      return;
+    }
+    state.recipes = data.recipes || [];
+    state.tags = data.tags || [];
+    renderTagFilter();
+    renderRecipes();
+    renderSummary();
+    if (recipe) {
+      openRecipeDetail(recipe.id);
+      toast(`Saved “${name}”.`);
+    } else {
+      closeModal();
+      toast(`Added “${name}”.`);
+    }
+  } catch (e) {
+    setConnected(false);
+  }
+}
+
+async function deleteRecipe(recipe) {
+  const ok = window.confirm(`Delete “${recipe.name}”? This cannot be undone.`);
+  if (!ok) return;
+  try {
+    const data = await api("/api/recipes/delete", { id: recipe.id });
     if (data.error) {
       toast(data.error);
       return;
@@ -552,7 +581,7 @@ async function submitNewRecipe() {
     renderRecipes();
     renderSummary();
     closeModal();
-    toast(`Added “${name}”.`);
+    toast(`Deleted “${recipe.name}”.`);
   } catch (e) {
     setConnected(false);
   }

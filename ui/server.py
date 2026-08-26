@@ -56,6 +56,7 @@ from domus.core import (  # noqa: E402  (import after sys.path tweak)
     set_todo_done,
     settings_payload,
     update_recipe,
+    delete_recipe,
 )
 from domus import db
 from domus.shopping import (  # noqa: E402
@@ -332,13 +333,42 @@ class DomusHandler(BaseHTTPRequestHandler):
             except (TypeError, ValueError):
                 self._send_json({"error": "invalid id"}, status=400)
                 return
-            update_recipe(
-                SETTINGS.database_path,
-                food_id,
-                notes=body.get("notes"),
-                tags=body.get("tags"),
-            )
+            prep = body.get("prep_time_min")
+            try:
+                prep_time_min = int(prep) if prep not in (None, "") else None
+            except (TypeError, ValueError):
+                prep_time_min = None
+            try:
+                update_recipe(
+                    SETTINGS.database_path,
+                    food_id,
+                    name=body.get("name"),
+                    meal_type=body.get("meal_type"),
+                    ingredient_details=body.get("ingredients"),
+                    prep_time_min=prep_time_min,
+                    notes=body.get("notes"),
+                    tags=body.get("tags"),
+                    author=body.get("author"),
+                    full_replace=bool(body.get("full_replace")),
+                )
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=400)
+                return
             self._send_json(_recipes_response())
+            return
+
+        if self.path == "/api/recipes/delete":
+            body = self._read_json()
+            try:
+                food_id = int(body.get("id"))
+            except (TypeError, ValueError):
+                self._send_json({"error": "invalid id"}, status=400)
+                return
+            deleted = delete_recipe(SETTINGS.database_path, food_id)
+            if deleted is None:
+                self._send_json({"error": "recipe not found"}, status=404)
+                return
+            self._send_json({"deleted": deleted, **_recipes_response()})
             return
 
         self.send_error(404, "Not found")

@@ -51,6 +51,7 @@ from domus.food_db import (
     list_foods,
     list_tags,
     update_recipe,
+    delete_recipe,
 )
 from domus.meals import handle_plan_meal
 from domus.router import route_message
@@ -74,6 +75,7 @@ __all__ = [
     "plan_recipe",
     "add_recipe",
     "update_recipe",
+    "delete_recipe",
     "get_food",
     "list_recipe_tags",
     "list_profiles",

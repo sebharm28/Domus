@@ -915,6 +915,27 @@ body {
   margin-top: 12px;
 }
 
+.modal-actions.spread {
+  justify-content: space-between;
+  align-items: center;
+}
+
+.modal-actions-right {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.btn.danger {
+  background: transparent;
+  color: #e05252;
+  border-color: rgba(224, 82, 82, 0.35);
+}
+
+.btn.danger:hover {
+  background: rgba(224, 82, 82, 0.08);
+}
+
 .btn {
   border: 1px solid var(--line);
   background: var(--surface);

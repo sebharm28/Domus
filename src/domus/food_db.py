@@ -307,25 +307,100 @@ def update_recipe(
     db_path: Path,
     food_id: int,
     *,
+    name: str | None = None,
+    meal_type: str | None = None,
+    ingredient_details: list[dict] | None = None,
+    prep_time_min: int | None = None,
     notes: str | None = None,
     tags: list[str] | None = None,
+    author: str | None = None,
+    full_replace: bool = False,
 ) -> Food | None:
-    """Update a recipe's markdown notes and/or its tag list."""
+    """Update a recipe. Use ``full_replace=True`` to overwrite all editable fields."""
+    existing = get_food(db_path, food_id)
+    if existing is None:
+        return None
+
     fields: list[str] = []
     params: list = []
-    if notes is not None:
+
+    if full_replace or name is not None:
+        raw_name = name if name is not None else existing.name
+        title = " ".join(word.capitalize() for word in str(raw_name).strip().split())
+        if not title:
+            raise ValueError("Recipe name is required.")
+        with connect(db_path) as conn:
+            clash = conn.execute(
+                "SELECT id FROM foods WHERE lower(name) = lower(?) AND id != ?",
+                (title, food_id),
+            ).fetchone()
+        if clash is not None:
+            raise ValueError(f'A recipe called "{title}" already exists.')
+        fields.append("name = ?")
+        params.append(title)
+
+    if full_replace or meal_type is not None:
+        fields.append("meal_type = ?")
+        params.append(meal_type if meal_type is not None else existing.meal_type)
+
+    if full_replace or ingredient_details is not None:
+        source = ingredient_details if ingredient_details is not None else existing.ingredient_details
+        details: list[dict] = []
+        names: list[str] = []
+        for item in source:
+            iname = str(item.get("name", "")).strip()
+            if not iname:
+                continue
+            amount = str(item.get("amount", "") or "").strip()
+            details.append({"name": iname, "amount": amount})
+            names.append(iname)
+        fields.append("ingredients = ?")
+        params.append(json.dumps(names))
+        fields.append("ingredient_details = ?")
+        params.append(json.dumps(details))
+
+    if full_replace or prep_time_min is not None:
+        fields.append("prep_time_min = ?")
+        params.append(prep_time_min)
+
+    if full_replace or notes is not None:
         fields.append("notes = ?")
         params.append(notes)
-    if tags is not None:
+
+    if full_replace or tags is not None:
+        tag_list = _clean_tags(tags if tags is not None else existing.tags)
+        effective_meal_type = meal_type or existing.meal_type
+        if effective_meal_type and effective_meal_type.lower() not in {
+            t.lower() for t in tag_list
+        }:
+            tag_list.insert(0, effective_meal_type)
         fields.append("tags = ?")
-        params.append(json.dumps(_clean_tags(tags)))
+        params.append(json.dumps(tag_list))
+
+    if full_replace or author is not None:
+        fields.append("author = ?")
+        params.append(author)
+
     if not fields:
-        return get_food(db_path, food_id)
+        return existing
+
     params.append(food_id)
     with connect(db_path) as conn:
         conn.execute(f"UPDATE foods SET {', '.join(fields)} WHERE id = ?", params)
         row = conn.execute("SELECT * FROM foods WHERE id = ?", (food_id,)).fetchone()
     return _row_to_food(row) if row else None
+
+
+def delete_recipe(db_path: Path, food_id: int) -> str | None:
+    """Delete a recipe by id. Returns the deleted recipe name, or None if missing."""
+    food = get_food(db_path, food_id)
+    if food is None:
+        return None
+    with connect(db_path) as conn:
+        conn.execute("DELETE FROM meal_history WHERE food_id = ?", (food_id,))
+        conn.execute("UPDATE meal_plans SET food_id = NULL WHERE food_id = ?", (food_id,))
+        conn.execute("DELETE FROM foods WHERE id = ?", (food_id,))
+    return food.name
 
 
 def list_tags(db_path: Path) -> list[str]:
