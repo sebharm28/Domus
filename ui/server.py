@@ -41,14 +41,17 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from domus.core import (  # noqa: E402  (import after sys.path tweak)
     add_item,
+    add_recipe,
     build_settings,
     delete_item,
     handle_user_message,
     init_storage,
     list_open_todos,
+    list_recipe_tags,
     list_recipes,
     plan_recipe,
     set_todo_done,
+    update_recipe,
 )
 from domus.shopping import (  # noqa: E402
     effective_quantity,
@@ -100,11 +103,21 @@ def _recipe_payload() -> list[dict]:
             "name": food.name,
             "meal_type": food.meal_type,
             "ingredients": food.ingredients,
+            "ingredient_details": food.ingredient_details,
+            "tags": food.tags,
+            "author": food.author,
             "prep_time_min": food.prep_time_min,
             "notes": food.notes,
         }
         for food in list_recipes(SETTINGS.database_path)
     ]
+
+
+def _recipes_response() -> dict:
+    return {
+        "recipes": _recipe_payload(),
+        "tags": list_recipe_tags(SETTINGS.database_path),
+    }
 
 
 class DomusHandler(BaseHTTPRequestHandler):
@@ -153,7 +166,7 @@ class DomusHandler(BaseHTTPRequestHandler):
             self._send_json({"todos": _todo_payload()})
             return
         if self.path.startswith("/api/recipes"):
-            self._send_json({"recipes": _recipe_payload()})
+            self._send_json(_recipes_response())
             return
         if self.path == "/" or not self.path.startswith("/api"):
             self._serve_static(self.path)
@@ -229,6 +242,50 @@ class DomusHandler(BaseHTTPRequestHandler):
                 return
             reply = plan_recipe(SETTINGS.database_path, name, created_by="You")
             self._send_json({"reply": reply, "todos": _todo_payload()})
+            return
+
+        if self.path == "/api/recipes/add":
+            body = self._read_json()
+            name = (body.get("name") or "").strip()
+            if not name:
+                self._send_json({"error": "Recipe name is required."}, status=400)
+                return
+            prep = body.get("prep_time_min")
+            try:
+                prep = int(prep) if prep not in (None, "") else None
+            except (TypeError, ValueError):
+                prep = None
+            try:
+                add_recipe(
+                    SETTINGS.database_path,
+                    name,
+                    meal_type=(body.get("meal_type") or "dinner").strip() or "dinner",
+                    ingredient_details=body.get("ingredients") or [],
+                    tags=body.get("tags") or [],
+                    notes=(body.get("notes") or None),
+                    author=(body.get("author") or None),
+                    prep_time_min=prep,
+                )
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=400)
+                return
+            self._send_json(_recipes_response())
+            return
+
+        if self.path == "/api/recipes/update":
+            body = self._read_json()
+            try:
+                food_id = int(body.get("id"))
+            except (TypeError, ValueError):
+                self._send_json({"error": "invalid id"}, status=400)
+                return
+            update_recipe(
+                SETTINGS.database_path,
+                food_id,
+                notes=body.get("notes"),
+                tags=body.get("tags"),
+            )
+            self._send_json(_recipes_response())
             return
 
         self.send_error(404, "Not found")

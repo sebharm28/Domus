@@ -22,6 +22,7 @@ from pathlib import Path
 from domus.config import (
     DEFAULT_BRIEFING_HOUR,
     DEFAULT_DB_PATH,
+    DEFAULT_EVENING_BRIEFING_HOUR,
     DEFAULT_OPENROUTER_MODEL,
     Settings,
     get_settings,
@@ -33,7 +34,15 @@ from domus.db import (
     list_open_todos,
     set_todo_done,
 )
-from domus.food_db import Food, init_food_tables, list_foods
+from domus.food_db import (
+    Food,
+    add_recipe,
+    get_food,
+    init_food_tables,
+    list_foods,
+    list_tags,
+    update_recipe,
+)
 from domus.meals import handle_plan_meal
 from domus.router import route_message
 from domus.todos import _add_or_merge_todo
@@ -52,6 +61,10 @@ __all__ = [
     "set_todo_done",
     "list_recipes",
     "plan_recipe",
+    "add_recipe",
+    "update_recipe",
+    "get_food",
+    "list_recipe_tags",
     "route_message",
 ]
 
@@ -69,6 +82,9 @@ def build_settings(*, database_path: Path | None = None) -> Settings:
         openrouter_model=os.getenv("OPENROUTER_MODEL", DEFAULT_OPENROUTER_MODEL).strip(),
         database_path=database_path or Path(os.getenv("DATABASE_PATH", str(DEFAULT_DB_PATH))),
         briefing_hour=int(os.getenv("BRIEFING_HOUR", str(DEFAULT_BRIEFING_HOUR))),
+        evening_briefing_hour=int(
+            os.getenv("EVENING_BRIEFING_HOUR", str(DEFAULT_EVENING_BRIEFING_HOUR))
+        ),
     )
 
 
@@ -109,6 +125,11 @@ def delete_item(db_path: Path, todo_id: int) -> Todo | None:
 def list_recipes(db_path: Path) -> list[Food]:
     """All known recipes/meal ideas, for a recipe-overview screen."""
     return list_foods(db_path)
+
+
+def list_recipe_tags(db_path: Path) -> list[str]:
+    """Distinct recipe tags for filtering."""
+    return list_tags(db_path)
 
 
 def plan_recipe(db_path: Path, name: str, *, created_by: str = "You") -> str:
