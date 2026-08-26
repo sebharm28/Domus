@@ -1,56 +1,71 @@
 :root {
-  --bg: #f4f1ec;
+  /* Rosa / dark-pink theme (light) */
+  --bg: #f7eef2;
   --bg-glow: #ffffff;
   --surface: #ffffff;
-  --surface-2: #faf8f4;
-  --ink: #23201c;
-  --ink-soft: #7c7468;
-  --accent: #e4572e;
-  --accent-soft: #fbe6de;
-  --domus: #2f6f6a;
-  --domus-soft: #e2efed;
-  --line: #e7e1d8;
-  --shadow: 0 10px 30px rgba(35, 32, 28, 0.08);
+  --surface-2: #fdf5f8;
+  --ink: #2a1f26;
+  --ink-soft: #8a7580;
+  --accent: #b02a68; /* dark pink — primary actions */
+  --accent-soft: #fbdcea; /* rosa tint */
+  --domus: #6d2545; /* deep plum — brand / secondary */
+  --domus-soft: #f6dced;
+  --line: #ecdce5;
+  --shadow: 0 10px 30px rgba(80, 20, 50, 0.1);
   --radius: 18px;
+  /* Chat bubbles: Domus = rosa, You = dark pink */
+  --chat-domus-bg: #ffd7e6;
+  --chat-domus-ink: #6d2545;
+  --chat-user-bg: #b02a68;
+  --chat-user-ink: #ffffff;
   /* Liquid-glass surfaces */
-  --glass: rgba(255, 255, 255, 0.55);
+  --glass: rgba(255, 246, 250, 0.6);
   --glass-border: rgba(255, 255, 255, 0.7);
-  --glass-shadow: 0 8px 32px rgba(35, 32, 28, 0.16);
+  --glass-shadow: 0 8px 32px rgba(80, 20, 50, 0.16);
 }
 
 :root[data-theme="dark"] {
-  --bg: #17150f;
-  --bg-glow: #201d15;
-  --surface: #211e17;
-  --surface-2: #1a1712;
-  --ink: #f0ebe1;
-  --ink-soft: #a89f8f;
-  --accent: #ff7043;
-  --accent-soft: #3a241b;
-  --domus: #58c2b8;
-  --domus-soft: #1e332f;
-  --line: #35302690;
+  /* Rosa / dark-pink theme (dark) */
+  --bg: #1a1116;
+  --bg-glow: #241820;
+  --surface: #221820;
+  --surface-2: #1c141a;
+  --ink: #f2e6ec;
+  --ink-soft: #b09aa6;
+  --accent: #cf5688; /* bright dark-pink for contrast on dark */
+  --accent-soft: #40202f;
+  --domus: #c65b8a; /* rose — brand / secondary */
+  --domus-soft: #3a2233;
+  --line: #43303b90;
   --shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
-  --glass: rgba(35, 31, 24, 0.5);
+  --chat-domus-bg: #52293c;
+  --chat-domus-ink: #ffd7e6;
+  --chat-user-bg: #b83a72;
+  --chat-user-ink: #ffffff;
+  --glass: rgba(40, 24, 33, 0.5);
   --glass-border: rgba(255, 255, 255, 0.08);
   --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #17150f;
-    --bg-glow: #201d15;
-    --surface: #211e17;
-    --surface-2: #1a1712;
-    --ink: #f0ebe1;
-    --ink-soft: #a89f8f;
-    --accent: #ff7043;
-    --accent-soft: #3a241b;
-    --domus: #58c2b8;
-    --domus-soft: #1e332f;
-    --line: #35302690;
+    --bg: #1a1116;
+    --bg-glow: #241820;
+    --surface: #221820;
+    --surface-2: #1c141a;
+    --ink: #f2e6ec;
+    --ink-soft: #b09aa6;
+    --accent: #cf5688;
+    --accent-soft: #40202f;
+    --domus: #c65b8a;
+    --domus-soft: #3a2233;
+    --line: #43303b90;
     --shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
-    --glass: rgba(35, 31, 24, 0.5);
+    --chat-domus-bg: #52293c;
+    --chat-domus-ink: #ffd7e6;
+    --chat-user-bg: #b83a72;
+    --chat-user-ink: #ffffff;
+    --glass: rgba(40, 24, 33, 0.5);
     --glass-border: rgba(255, 255, 255, 0.08);
     --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
   }
@@ -258,15 +273,15 @@ body {
 
 .bubble.user {
   align-self: flex-end;
-  background: var(--accent);
-  color: #fff;
+  background: var(--chat-user-bg);
+  color: var(--chat-user-ink);
   border-bottom-right-radius: 5px;
 }
 
 .bubble.domus {
   align-self: flex-start;
-  background: var(--domus-soft);
-  color: var(--ink);
+  background: var(--chat-domus-bg);
+  color: var(--chat-domus-ink);
   border-bottom-left-radius: 5px;
 }
 
@@ -652,6 +667,39 @@ body {
   font-style: italic;
 }
 
+/* ---------- KITCHEN (work in progress) ---------- */
+.wip {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 8px;
+  color: var(--ink-soft);
+  border: 2px dashed var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  margin-bottom: 8px;
+}
+
+.wip-icon {
+  font-size: 44px;
+}
+
+.wip h2 {
+  margin: 0;
+  font-size: 20px;
+  color: var(--ink);
+}
+
+.wip p {
+  margin: 0;
+  font-size: 14px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
 /* ---------- LIQUID-GLASS TAB BAR ---------- */
 .tabbar {
   position: fixed;
@@ -660,7 +708,7 @@ body {
   transform: translateX(-50%);
   width: min(680px, calc(100% - 32px));
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 4px;
   padding: 8px;
   border-radius: 22px;
