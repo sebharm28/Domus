@@ -142,6 +142,49 @@ def find_food_by_name(db_path: Path, name: str) -> Food | None:
     return _row_to_food(match) if match else None
 
 
+def add_custom_food(
+    db_path: Path,
+    name: str,
+    *,
+    meal_type: str = "dinner",
+    notes: str | None = "Added from your preferences",
+) -> Food:
+    title = " ".join(word.capitalize() for word in name.strip().split())
+    ingredient = name.strip().lower()
+    with connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT * FROM foods WHERE lower(name) = lower(?)",
+            (title,),
+        ).fetchone()
+        if row is not None:
+            return _row_to_food(row)
+        cursor = conn.execute(
+            """
+            INSERT INTO foods (name, meal_type, ingredients, prep_time_min, notes)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (title, meal_type, json.dumps([ingredient]), None, notes),
+        )
+        row = conn.execute(
+            "SELECT * FROM foods WHERE id = ?",
+            (cursor.lastrowid,),
+        ).fetchone()
+    return _row_to_food(row)
+
+
+def _likes_score(food: Food, profiles: list) -> int:
+    score = 0
+    blob = food.name.lower()
+    for profile in profiles:
+        if not profile.likes:
+            continue
+        for like in profile.likes.split(","):
+            like = like.strip().lower()
+            if like and like in blob:
+                score += 1
+    return score
+
+
 def suggest_foods(
     db_path: Path,
     meal_type: str | None = None,
@@ -166,8 +209,12 @@ def suggest_foods(
             candidates = list_foods(db_path, meal_type)
     if not candidates:
         return []
-    random.shuffle(candidates)
-    return candidates[:count]
+    liked = [food for food in candidates if _likes_score(food, profiles or []) > 0]
+    other = [food for food in candidates if food not in liked]
+    random.shuffle(liked)
+    random.shuffle(other)
+    ranked = liked + other
+    return ranked[:count]
 
 
 def _row_to_meal_plan(row: sqlite3.Row) -> MealPlanEntry:

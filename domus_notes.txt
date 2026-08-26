@@ -428,14 +428,30 @@ What stays English for now (explicit)
 
 
 ================================================================================
-BRING! APP & DOMUS HOUSEHOLD APP (discussion — Aug 2026)
+BRING! APP — DEPRECATED (Aug 2026)
 ================================================================================
-Status: **under discussion — no decision yet.** Full notes also in app_discussion.txt.
+Status: **deprecated — not pursuing.** We are building our own Domus UI for
+shopping, tasks, meals, and reminders. Telegram remains a test harness for NLP
+and rule-based handling only.
 
-We use Bring! as our native shopping-list UI (fast check-off in the store, shared
+Bring! was considered as an optional shopping mirror (see app_discussion.txt for
+historical API notes). That path is closed unless requirements change.
+
+Current architecture target:
+  Telegram → test input / NLP lab
+  Domus SQLite + own UI → single household brain and display
+  Bring! → not used
+
+
+================================================================================
+BRING! APP & DOMUS HOUSEHOLD APP (historical discussion — Aug 2026)
+================================================================================
+Status: **superseded — see DEPRECATED section above.** Full notes in app_discussion.txt.
+
+We previously used Bring! as our native shopping-list UI (fast check-off in the store, shared
 household list). Domus handles NLP, meals, reminders, and tasks via Telegram.
-The question: should Domus mirror shopping into Bring! instead of growing its
-own list UI — and could Domus eventually become a broader household app?
+The question was: should Domus mirror shopping into Bring! instead of growing its
+own list UI — we now answer no: build our own app instead.
 
 
 WHY TELEGRAM + BRING! TOGETHER
@@ -605,7 +621,7 @@ Things the bot can build once you have a preference — no rush:
     - Should voice notes default to /private (no cloud LLM on transcript)?
     - Telegram sends OGG/opus — confirm pipeline before building
 
-  Bring! sync & Domus app (#app-discussion)
+  Bring! sync & Domus app (#app-discussion) — **Bring deprecated; own UI is the path**
     - See section "BRING! APP & DOMUS HOUSEHOLD APP" above
     - Full thread: app_discussion.txt
     - Decision deferred — no implementation until household agrees on sync model
@@ -624,79 +640,77 @@ Shopping & list hygiene — DONE (Aug 2026)
 
 
 Reminders & timing
-  5. RELATIVE REMINDERS (short-term)
-     "Domus, remind me in 2 hours" / "in 30 minutes" — for spontaneous things
-     ("oven is on"). Currently only date/weekday-based (tomorrow, every
-     Tuesday). Needs one-off scheduler jobs via PTB job_queue.
-
-  6. QUIET HOURS
-     No reminder pushes between e.g. 22:00–07:00; batch them into the next
-     morning briefing instead. Configurable in .env. Especially important in
-     a shared Telegram group.
-
-  7. SNOOZE A REMINDER
-     "Domus, snooze pay rent until tomorrow" — bump due_date + reset
-     reminder_sent for one-time todos; push next_due for recurring.
+  [x] 5. RELATIVE REMINDERS (short-term) — one-shot timers in SQLite + scheduler
+  [x] Cancel pending timer — "cancel the reminder" (wave 4)
+  [x] 7. SNOOZE A REMINDER — todos, recurring, and one-shot timers (wave 5)
 
 
 Corrections & UX
-  8. UNDO LAST ACTION
-     "Domus, undo" reverts the last add/remove/complete. With two users in
-     one chat, typos happen easily — "I meant …" is the only correction path
-     today. Needs a small action log (last N operations per chat).
-
-  9. SHOW ONLY ONE CATEGORY
-     "Domus, show admin tasks" / "what's on the household list?" — filter
-     list_open_todos by category.
+  [x] 8. UNDO LAST ACTION — "undo" per chat; add/remove/complete/clear/cancel/snooze (wave 4–5)
+  [x] 9. SHOW ONLY ONE CATEGORY — category-filtered list_todos (wave 2b)
 
 
 Meals (quick wins)
-  10. ADD CUSTOM MEALS TO THE DATABASE
-      "Domus, add meal grilled cheese: bread, cheese, butter" — INSERT into
-      foods table; immediately usable for plan_meal and suggestions.
+  [x] 10. ADD CUSTOM MEALS — via log_preference ("I like X") + future explicit recipe add
+  [x] Missing ingredients fallback — meal plan today/tomorrow, then suggest (wave 4)
+  [x] Casual meal phrasing — suggest_meal for "what should we cook" (wave 3)
 
 
 Briefings & housekeeping
-  11. EVENING SUMMARY
-      Scheduled job at 20:00: tomorrow's due tasks + planned dinner from
-      meal plan. Mirror of morning briefing.
-
-  12. DONE WITH RECURRING TASK ACK
-      "Domus, done with trash" after a recurring reminder — optional log or
-      completion history.
-
-  13. DATABASE BACKUP ON SCHEDULE
-      Daily job: copy data/domus.db → data/backups/domus_YYYY-MM-DD.db
+  [x] 11. EVENING SUMMARY — daily job at EVENING_BRIEFING_HOUR (default 20:00)
+  [ ] 12–13 moved to NEXT STEP (recurring ack, DB backup)
 
 
-Voice (medium effort — DEFERRED, see priority backlog #9)
-  14. VOICE MESSAGE INPUT
-      Transcribe Telegram voice notes (e.g. via Whisper on OpenRouter or a
-      local model) then route as normal text. Wanted later; not now.
+Telegram bot role (Aug 2026)
+--------------------------------
+The Telegram bot is **not** the product. It exists to improve and test:
+  - natural-language parsing (rules + optional OpenRouter)
+  - rule-based intent routing
+  - interaction patterns before they land in the Domus UI
+
+Shopping hygiene extras (wave 4):
+  [x] Shopping items never get due dates (even if message mentions tomorrow)
 
 
-###planned — two users / two apartments (person-context)
----------------------------------------------------------
-Domus serves two people in two apartments, but nothing tracks *who* did what
-or *where* a task belongs. These fill that gap:
+Preference learning (wave 3–4):
+  [x] "I like X" → likes + custom food
+  [x] "I don't like X" → dislikes (append, wave 4)
 
 
-  1. ASSIGN TASKS TO A PERSON
-     "Domus, assign trash to me" / "assign rent to Sebastian". Store
-     assigned_to on todos; show in list and briefing output.
+### NEXT STEP — build on this
+--------------------------------
+Telegram bot stays the NLP / rules test harness. Own Domus UI is the product.
+Implement these next, in rough priority order:
 
-  2. LOG WHO COMPLETED A TASK
-     When checking off, record completed_by + completed_at. Enables fairness
-     tracking and weekly stats.
 
-  3. "WHO DID WHAT" WEEKLY STATS
-     "Domus, who did what this week?" — summary of completions per person.
-     Often the actual friction point in shared households.
+Reminders & housekeeping
+  [ ] 6. QUIET HOURS — no pushes 22:00–07:00; batch into morning briefing (.env)
+  [ ] 12. DONE WITH RECURRING TASK ACK — log when trash/etc. is marked done
+  [ ] 13. DATABASE BACKUP ON SCHEDULE — daily copy of data/domus.db → data/backups/
 
-  4. LOCATION / APARTMENT TAG
-     "Domus, add buy filter for apartment A" — bind tasks to a place so the
-     briefing and shopping list don't mix both households. Could be a location
-     field or a category extension (apartment_a / apartment_b / shared).
+
+Meals
+  [ ] Explicit recipe add — "add meal grilled cheese: bread, cheese, butter"
+  [ ] Full weekly plan from Monday (currently today → Sunday only)
+  [ ] Breakfast/lunch in weekly plan (dinners only today)
+
+
+Person-context (two users / two apartments)
+  [ ] Assign tasks to a person — assigned_to on todos
+  [ ] Log who completed a task — completed_by + completed_at
+  [ ] "Who did what" weekly stats
+  [ ] Location tag already partial (apartment on todos) — polish in UI + briefing
+
+
+Platform / privacy
+  [ ] Redaction patterns in .env before OpenRouter
+  [ ] OpenRouter JSON repair (second LLM call — TBD)
+  [ ] Long-term conversation brain (Phase 2 — beyond last_todo_id)
+  [ ] Merge UI branch scaffold — read-only dashboard for lists, meals, profile
+
+
+Voice (deferred)
+  [ ] Voice message transcription — see priority backlog #9
 
 
 WHAT IS MISSING OVERALL
@@ -712,7 +726,7 @@ MVP gaps (partially done):
   [ ] Breakfast/lunch in weekly plan (dinners only)
   [ ] Short-term relative reminders ("in 30 minutes") — see planned #5
   [x] Shopping quantities and duplicate merge
-  [ ] Bring! shopping list sync (optional) — see BRING! APP section, app_discussion.txt
+  [x] Bring! shopping list sync — **deprecated** (building own UI instead)
   [ ] Per-user assignment and completion tracking — see planned (person-context)
   [ ] Location tag for two apartments — see planned (person-context)
   [ ] "What's missing" without a named meal when no plan exists (falls back
@@ -764,15 +778,16 @@ Cost & ops (from dev brief, not yet tracked in-app):
 QUICK REFERENCE — ALL INTENTS
 ------------------------------
 add_todo, complete_todo, remove_todo, update_todo, list_todos,
-export_list, clear_shopping_list,
-update_profile, show_profile,
+export_list, clear_shopping_list, clear_todos,
+update_profile, show_profile, log_preference, log_dispreference,
+cancel_timer, undo, snooze_reminder,
 suggest_meal, log_meal, plan_meal, plan_week, show_meal_plan,
 missing_ingredients,
-add_recurring_reminder, list_reminders, remove_reminder,
+add_recurring_reminder, add_relative_reminder, list_reminders, remove_reminder,
 daily_briefing,
 help, greeting, thanks
 
 
-Last updated: 25 August 2026 (wave 2: profiles, context brain, NL task edits)
+Last updated: 26 August 2026 (wave 5: snooze, undo expanded; NEXT STEP backlog)
 Branch: cursor/todo-list-openrouter-sqlite
 Related: app_discussion.txt, log_discussion.md

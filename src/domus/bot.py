@@ -13,7 +13,11 @@ from domus.food_db import init_food_tables
 from domus.lifecycle import notify_subscribed_chats
 from domus.private_mode import apply_private_mode
 from domus.router import route_message
-from domus.scheduler import start_morning_briefing_scheduler, start_reminder_scheduler
+from domus.scheduler import (
+    start_evening_briefing_scheduler,
+    start_morning_briefing_scheduler,
+    start_reminder_scheduler,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +151,7 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def on_init(application: Application) -> None:
     start_reminder_scheduler(application)
     start_morning_briefing_scheduler(application)
+    start_evening_briefing_scheduler(application)
     await notify_subscribed_chats(application, "Hi, I am awake and ready.")
 
 

@@ -59,16 +59,31 @@ def _extract_missing_meal_query(text: str) -> str | None:
         r"what(?:'s| is) missing(?: for| from)?\s+(.+)$",
         r"what do (?:we|i) need(?: to buy)? for\s+(.+)$",
         r"what(?:'s| is) missing for (?:dinner|lunch|breakfast|tonight)\??$",
+        r"what(?:'s| is) missing\??$",
     ]
     for pattern in patterns:
         match = re.search(pattern, normalized)
         if match:
             if match.lastindex:
-                return match.group(1).strip(" .")
-            return normalized.split()[-1] if "dinner" in normalized or "lunch" in normalized else "dinner"
+                return match.group(1).strip(" .?")
+            if "breakfast" in normalized:
+                return "breakfast"
+            if "lunch" in normalized:
+                return "lunch"
+            return "dinner"
     if re.search(r"missing for (?:dinner|tonight)|need for (?:dinner|tonight)", normalized):
         return "dinner"
     return None
+
+
+def _meal_plan_food(db_path: Path, day: str) -> food_db.Food | None:
+    entry = food_db.get_meal_plan_for_day(db_path, day)
+    if entry is None:
+        return None
+    if entry.food_id:
+        foods = food_db.list_foods(db_path)
+        return next((food for food in foods if food.id == entry.food_id), None)
+    return food_db.find_food_by_name(db_path, entry.dish)
 
 
 def _week_end(today: date) -> date:
@@ -84,15 +99,19 @@ def _extract_meal_name(text: str) -> str | None:
     for pattern in patterns:
         match = re.search(pattern, normalized)
         if match:
-            name = match.group(1).strip()
-            name = re.sub(
-                r"\s+for\s+(?:breakfast|lunch|dinner|snack|tonight|today)\s*$",
-                "",
-                name,
-            )
-            name = re.sub(r"\s+(?:for\s+)?(?:tonight|today)\s*$", "", name)
-            return name.strip(" .")
+            return normalize_plan_meal_name(match.group(1))
     return None
+
+
+def normalize_plan_meal_name(name: str) -> str:
+    cleaned = name.strip().lower().rstrip(".!?")
+    cleaned = re.sub(
+        r"\s+for\s+(?:breakfast|lunch|dinner|snack|tonight|today|tomorrow)\s*$",
+        "",
+        cleaned,
+    )
+    cleaned = re.sub(r"\s+(?:for\s+)?(?:tonight|today|tomorrow)\s*$", "", cleaned)
+    return cleaned.strip(" .")
 
 
 def format_meal_suggestions(
@@ -142,7 +161,7 @@ def handle_suggest_meal(
 
 def handle_plan_meal(text: str, db_path: Path, created_by: str, meal_name: str | None = None) -> str:
     raw = (meal_name or text).strip()
-    resolved_name = _extract_meal_name(raw) or raw
+    resolved_name = _extract_meal_name(raw) or normalize_plan_meal_name(raw)
     if not resolved_name:
         return 'Tell me what you want to cook, e.g. "let\'s make curry with rice tonight".'
 
@@ -175,15 +194,13 @@ def _resolve_food_for_missing(
     if not query:
         return None
 
-    lowered = query.strip().lower()
+    lowered = query.strip().lower().rstrip(".?")
     if lowered in {"dinner", "lunch", "breakfast", "tonight", "today"}:
-        today = date.today().isoformat()
-        entry = food_db.get_meal_plan_for_day(db_path, today)
-        if entry and entry.food_id:
-            foods = food_db.list_foods(db_path)
-            return next((food for food in foods if food.id == entry.food_id), None)
-        if entry:
-            return food_db.find_food_by_name(db_path, entry.dish)
+        today = date.today()
+        for day in (today.isoformat(), (today + timedelta(days=1)).isoformat()):
+            food = _meal_plan_food(db_path, day)
+            if food is not None:
+                return food
         meal_type = infer_meal_type(lowered) or "dinner"
         suggestions = food_db.suggest_foods(db_path, meal_type=meal_type, count=1)
         return suggestions[0] if suggestions else None

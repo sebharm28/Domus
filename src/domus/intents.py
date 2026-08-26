@@ -10,7 +10,7 @@ from domus.categories import infer_category
 from domus.config import Settings
 from domus.dates import parse_category_hint, parse_due_date, extract_due_date_from_message, parse_apartment_hint
 from domus.natural_language import try_parse_natural_add
-from domus.meals import _extract_missing_meal_query
+from domus.meals import _extract_missing_meal_query, normalize_plan_meal_name
 from domus.recurrence import parse_reminder_phrase
 from domus.relative_reminders import parse_relative_reminder_phrase
 from domus.structured_add import try_parse_structured_add
@@ -26,6 +26,7 @@ IntentName = Literal[
     "list_todos",
     "export_list",
     "clear_shopping_list",
+    "clear_todos",
     "suggest_meal",
     "log_meal",
     "plan_meal",
@@ -39,6 +40,11 @@ IntentName = Literal[
     "daily_briefing",
     "update_profile",
     "show_profile",
+    "log_preference",
+    "log_dispreference",
+    "cancel_timer",
+    "undo",
+    "snooze_reminder",
     "help",
     "greeting",
     "thanks",
@@ -53,6 +59,7 @@ VALID_INTENTS = {
     "list_todos",
     "export_list",
     "clear_shopping_list",
+    "clear_todos",
     "suggest_meal",
     "log_meal",
     "plan_meal",
@@ -66,6 +73,11 @@ VALID_INTENTS = {
     "daily_briefing",
     "update_profile",
     "show_profile",
+    "log_preference",
+    "log_dispreference",
+    "cancel_timer",
+    "undo",
+    "snooze_reminder",
     "help",
     "greeting",
     "thanks",
@@ -88,7 +100,7 @@ class Intent:
 SYSTEM_PROMPT = """You parse household assistant commands for a Telegram bot.
 Users write in casual, messy natural language — typos and unclear phrasing are normal.
 Return ONLY valid JSON with this shape:
-{"intents":[{"intent":"add_todo|complete_todo|remove_todo|update_todo|list_todos|export_list|clear_shopping_list|suggest_meal|log_meal|plan_meal|plan_week|show_meal_plan|missing_ingredients|add_recurring_reminder|list_reminders|remove_reminder|daily_briefing|help|greeting|thanks|unknown","item":string|null,"due_date":"YYYY-MM-DD"|null,"category":"shopping|household|admin|maintenance|personal|general"|null,"recurrence":"daily|weekly:monday|monthly:1"|null}, ...]}
+{"intents":[{"intent":"add_todo|complete_todo|remove_todo|update_todo|list_todos|export_list|clear_shopping_list|clear_todos|suggest_meal|log_meal|plan_meal|plan_week|show_meal_plan|missing_ingredients|add_recurring_reminder|list_reminders|remove_reminder|daily_briefing|help|greeting|thanks|unknown","item":string|null,"due_date":"YYYY-MM-DD"|null,"category":"shopping|household|admin|maintenance|personal|general"|null,"recurrence":"daily|weekly:monday|monthly:1"|null}, ...]}
 
 Rules:
 - Interpret intent generously from context; do not require exact command wording.
@@ -97,11 +109,13 @@ Rules:
 - complete_todo: mark an item as done or bought
 - remove_todo: remove an item from the list without marking done
 - update_todo: fix due date, rename, or recategorize a recent task
-- update_profile: save user preferences (diet, apartment, allergies)
+- update_profile: save user preferences (diet, apartment, allergies, dislikes)
+- log_preference: user says they like or love a food (e.g. "I really like currywurst")
 - show_profile: show saved preferences for the speaker
 - list_todos: show open items
 - export_list: export the list as plain text or CSV (item field "csv" for CSV format)
 - clear_shopping_list: wipe all open shopping items
+- clear_todos: wipe all open tasks (not just shopping)
 - suggest_meal: user asks what to eat, meal ideas, dinner/breakfast suggestions
 - log_meal: user says what they ate (e.g. "I had pasta for dinner")
 - plan_meal: user decides to cook something (e.g. "let's make curry with rice tonight") — add missing ingredients to shopping list
@@ -109,7 +123,8 @@ Rules:
 - show_meal_plan: user asks to see the current weekly meal plan
 - missing_ingredients: user asks what's still needed for a meal (read-only, no list changes)
 - add_recurring_reminder: repeating household reminders (weekly trash, monthly rent)
-- list_reminders: show all recurring reminders
+- list_reminders: show recurring reminders and pending one-shot timers
+- snooze_reminder: push a due task or timer to a later time
 - remove_reminder: delete a recurring reminder
 - daily_briefing: user asks for today's overview (tasks due, shopping, meal idea)
 - help, greeting, thanks: social intents
@@ -246,9 +261,20 @@ def _parse_profile_intents(text: str) -> list[Intent] | None:
     if dislike_match:
         return [
             Intent(
-                name="update_profile",
+                name="log_dispreference",
                 item=_normalize_item(dislike_match.group(1)),
-                category="dislikes",
+            )
+        ]
+
+    like_match = re.search(
+        r"\bi(?: really| absolutely|)? (?:like|love|enjoy)\s+(.+)$",
+        normalized,
+    )
+    if like_match:
+        return [
+            Intent(
+                name="log_preference",
+                item=_normalize_item(like_match.group(1)),
             )
         ]
 
@@ -261,7 +287,20 @@ def _merge_due_dates(text: str, intents: list[Intent]) -> list[Intent]:
         return intents
     merged: list[Intent] = []
     for intent in intents:
-        if intent.name == "add_todo" and not intent.due_date:
+        if intent.name == "add_todo" and intent.category == "shopping":
+            merged.append(
+                Intent(
+                    name=intent.name,
+                    item=intent.item,
+                    new_item=intent.new_item,
+                    due_date=None,
+                    category=intent.category,
+                    apartment=intent.apartment,
+                    recurrence=intent.recurrence,
+                    delay_minutes=intent.delay_minutes,
+                )
+            )
+        elif intent.name == "add_todo" and not intent.due_date:
             merged.append(
                 Intent(
                     name=intent.name,
@@ -293,6 +332,25 @@ def _build_add_intent(raw_item: str, default_category: str | None = None) -> Int
     )
 
 
+def _parse_snooze_intents(text: str) -> list[Intent] | None:
+    normalized = sanitize_command(text).strip().lower().rstrip(".!?")
+    if not re.search(r"\bsnooze\b", normalized):
+        return None
+    from domus.snooze import parse_snooze_phrase
+
+    item_hint, due_date, delay_minutes = parse_snooze_phrase(normalized)
+    if due_date is None and delay_minutes is None:
+        return None
+    return [
+        Intent(
+            name="snooze_reminder",
+            item=item_hint,
+            due_date=due_date,
+            delay_minutes=delay_minutes,
+        )
+    ]
+
+
 def _parse_relative_intents(text: str) -> list[Intent] | None:
     normalized = sanitize_command(text).strip().lower().rstrip(".!?")
     relative = parse_relative_reminder_phrase(normalized)
@@ -316,7 +374,7 @@ def _finalize_add_intents(intents: list[Intent]) -> list[Intent]:
             Intent(
                 name="add_todo",
                 item=text or None,
-                due_date=intent.due_date or due_date,
+                due_date=None if (intent.category or infer_category(text, category_hint)) == "shopping" else (intent.due_date or due_date),
                 category=intent.category or infer_category(text, category_hint),
                 apartment=intent.apartment or apartment,
             )
@@ -329,6 +387,7 @@ def _rules_resolve(text: str) -> list[Intent]:
         _parse_correction_intents,
         _parse_edit_intents,
         _parse_profile_intents,
+        _parse_snooze_intents,
         _parse_relative_intents,
     ):
         parsed = parser(text)
@@ -489,6 +548,38 @@ def _split_clauses(text: str) -> list[str]:
     return [part.strip(" ,:;-") for part in parts if part.strip(" ,:;-")]
 
 
+def _parse_meal_suggest_intents(normalized: str) -> list[Intent] | None:
+    if re.search(
+        r"(?:what should (?:we|i) (?:cook|make|eat)|"
+        r"what (?:are we|should we) (?:cooking|making|having)(?: for)?|"
+        r"(?:make|give)(?: me)? a recommendation for|"
+        r"recommend(?:ation)?(?: for)?|"
+        r"what(?:'s| is) for (?:dinner|lunch|breakfast)(?: tomorrow)?|"
+        r"meal ideas?(?: for)?|"
+        r"what (?:can|should) we (?:have|eat)(?: for)?)",
+        normalized,
+    ):
+        meal_type = None
+        for candidate in ("breakfast", "lunch", "dinner", "snack"):
+            if candidate in normalized:
+                meal_type = candidate
+                break
+        return [Intent(name="suggest_meal", item=meal_type)]
+    return None
+
+
+def _parse_clear_intents(normalized: str) -> list[Intent] | None:
+    if re.search(r"(?:clear|wipe|empty)\s+(?:the\s+)?shopping\s+list", normalized):
+        return [Intent(name="clear_shopping_list")]
+    if re.search(
+        r"(?:clear|wipe|empty)\s+(?:the\s+)?(?:(?:todo|to-do|task)s?\s*)?list\b|"
+        r"(?:clear|wipe|empty)\s+(?:all\s+)?(?:my\s+)?(?:todos?|tasks)\b",
+        normalized,
+    ):
+        return [Intent(name="clear_todos")]
+    return None
+
+
 def _parse_clause_intents(normalized: str) -> list[Intent]:
     if re.match(
         r"^(?:hi|hello|hey|good (?:morning|evening|night)|guten (?:tag|morgen|abend)|moin|servus)(?: there)?[!.,]*$",
@@ -516,10 +607,43 @@ def _parse_clause_intents(normalized: str) -> list[Intent]:
         return [Intent(name="add_recurring_reminder", item=task, recurrence=recurrence)]
 
     if re.search(
-        r"(?:show|list)(?: the)? recurring reminders|what reminders(?: are set)?",
+        r"(?:show|list)(?: the)? recurring reminders|what reminders(?: are set)?|"
+        r"where(?:'s| is) (?:the|my) reminder|"
+        r"show my timers?|pending reminders?|"
+        r"what timers? do i have",
         normalized,
     ):
         return [Intent(name="list_reminders")]
+
+    if re.search(
+        r"(?:cancel|delete|forget|never mind)(?: the| my| that)?(?: timer| reminder)|"
+        r"cancel it(?: timer| reminder)?$",
+        normalized,
+    ):
+        cancel_match = re.search(
+            r"(?:cancel|delete|forget)(?: the| my)?(?: timer| reminder)(?: to| about| for)?\s+(.+)$",
+            normalized,
+        )
+        hint = _normalize_item(cancel_match.group(1)) if cancel_match else None
+        return [Intent(name="cancel_timer", item=hint)]
+
+    if re.match(r"^(?:domus, )?undo(?: that| last action| last)?[!.?]*$", normalized):
+        return [Intent(name="undo")]
+
+    snooze_match = re.search(r"\bsnooze\b", normalized)
+    if snooze_match:
+        from domus.snooze import parse_snooze_phrase
+
+        item_hint, due_date, delay_minutes = parse_snooze_phrase(normalized)
+        if due_date is not None or delay_minutes is not None:
+            return [
+                Intent(
+                    name="snooze_reminder",
+                    item=item_hint,
+                    due_date=due_date,
+                    delay_minutes=delay_minutes,
+                )
+            ]
 
     remove_reminder_match = re.search(
         r"^(?:please |also |and )?(?:remove|delete)\s+(?:the )?(?:recurring )?reminder(?: for)?\s+(.+)$",
@@ -554,11 +678,9 @@ def _parse_clause_intents(normalized: str) -> list[Intent]:
         query = _extract_missing_meal_query(normalized) or normalized
         return [Intent(name="missing_ingredients", item=query)]
 
-    if re.search(
-        r"(?:clear|wipe|empty)\s+(?:the\s+)?(?:shopping\s+)?list",
-        normalized,
-    ):
-        return [Intent(name="clear_shopping_list")]
+    clear_intents = _parse_clear_intents(normalized)
+    if clear_intents:
+        return clear_intents
 
     if re.search(
         r"export(?: the)?(?: shopping)? list|download(?: the)? list|print(?: the)? list",
@@ -598,10 +720,20 @@ def _parse_clause_intents(normalized: str) -> list[Intent]:
     ):
         return [Intent(name="daily_briefing")]
 
-    if re.search(
-        r"(?:let's|lets|we(?:'ll| will)|i want to|going to|gonna)\s+(?:make|cook|prepare)\s+",
+    meal_suggest = _parse_meal_suggest_intents(normalized)
+    if meal_suggest:
+        return meal_suggest
+
+    if not re.search(
+        r"\b(?:recommendation|recommend|suggest(?:ion)?|ideas?)\b",
         normalized,
-    ) or re.match(r"^(?:cook|make|prepare)\s+", normalized):
+    ) and (
+        re.search(
+            r"(?:let's|lets|we(?:'ll| will)|i want to|going to|gonna)\s+(?:make|cook|prepare)\s+",
+            normalized,
+        )
+        or re.match(r"^(?:cook|make|prepare)\s+", normalized)
+    ):
         meal_name = normalized
         for pattern in (
             r"(?:let's|lets|we(?:'ll| will)|i want to|going to|gonna)\s+(?:make|cook|prepare)\s+(.+)$",
@@ -609,8 +741,10 @@ def _parse_clause_intents(normalized: str) -> list[Intent]:
         ):
             match = re.search(pattern, normalized)
             if match:
-                meal_name = match.group(1).strip()
+                meal_name = normalize_plan_meal_name(match.group(1))
                 break
+        else:
+            meal_name = normalize_plan_meal_name(meal_name)
         return [Intent(name="plan_meal", item=meal_name)]
 
     if re.search(
@@ -640,7 +774,18 @@ def _parse_clause_intents(normalized: str) -> list[Intent]:
     )
     if add_match:
         item = next(group for group in add_match.groups() if group)
-        return [_build_add_intent(item, default_category=_default_list_category(normalized))]
+        category = _default_list_category(normalized)
+        on_shopping_list = (
+            category == "shopping"
+            or "shopping list" in normalized
+            or re.search(r"\bto the list\s*$", normalized)
+        )
+        if on_shopping_list and re.search(r"\s+and\s+|,", item):
+            return [
+                _build_add_intent(part, default_category="shopping")
+                for part in _split_items(item)
+            ]
+        return [_build_add_intent(item, default_category=category)]
 
     task_add_match = re.match(
         r"^(?:please |could u |could you |also |and )?add\s+(.+)$",
@@ -675,8 +820,22 @@ def _parse_with_rules(text: str) -> list[Intent]:
     structured = try_parse_structured_add(cleaned)
     if structured:
         item, due_date, category = structured
-        intents = [Intent(name="add_todo", item=item, due_date=due_date, category=category)]
+        if category == "shopping" and item and re.search(r"\s+and\s+|,", item):
+            intents = [
+                _build_add_intent(part, default_category="shopping")
+                for part in _split_items(item)
+            ]
+        else:
+            intents = [Intent(name="add_todo", item=item, due_date=due_date, category=category)]
         return _finalize_add_intents(_merge_due_dates(cleaned, intents))
+
+    clear_intents = _parse_clear_intents(cleaned.lower())
+    if clear_intents:
+        return clear_intents
+
+    snooze_intents = _parse_snooze_intents(cleaned)
+    if snooze_intents:
+        return snooze_intents
 
     if not re.match(
         r"^(?:please |could u |could you |)?(?:add|put|remove|delete|show|list|what|i said|i meant|remind)",

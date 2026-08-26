@@ -62,11 +62,42 @@ Raw logs stay local and are gitignored — only summaries and lessons go here.
 - **Reminders** split across due-date todos, recurring, and one-shot — user-facing replies don’t reflect that model.
 
 **Suggested next fixes (when ready)**
-- [ ] `clear_todos` intent + synonyms (“empty the list”, “wipe todos”)
-- [ ] Extend context to `remove_todo` / `complete_todo` (“remove it”, “bought that”)
-- [ ] Meal phrasing: “what should we cook tomorrow” → `suggest_meal` or `plan_meal`
-- [ ] `list_timers` / include one-shot reminders in “where’s my reminder?”
-- [ ] Log preference statements → profile or custom food (`I like currywurst`)
+- [x] `clear_todos` intent + synonyms (“empty the list”, “wipe todos”)
+- [x] Extend context to `remove_todo` / `complete_todo` (“remove it”, “bought that”)
+- [x] Meal phrasing: “what should we cook tomorrow” → `suggest_meal` or `plan_meal`
+- [x] `list_timers` / include one-shot reminders in “where’s my reminder?”
+- [x] Log preference statements → profile or custom food (`I like currywurst`)
+
+---
+
+## 2026-08-26 — `session_2026-08-26_17-33-39.log` (wave 4–5 live test)
+
+**What went well**
+- Shopping merge, export CSV, clear list, **no due date on** *"add milk to the list tomorrow"*.
+- **`empty the todo list`** cleared (no longer mis-added).
+- **Undo** add, cancel timer, snooze — all worked.
+- **Context brain:** *"remove it"*, *"bought it"*, due tomorrow + rename, doctor remove in one message.
+- **Reminders:** recurring, relative timer, *"where's the reminder?"* (pending + recent), snooze, cancel.
+- **Meals:** casual suggest phrasing, **currywurst** liked → prioritized in dinner ideas, weekly plan + missing ingredients.
+- **Profile:** vegetarian, apartment, likes/dislikes, show profile.
+- *"show us our shopping list"* worked.
+
+**What failed or misfired**
+1. *"add eggs and bread to the list"* → one line **"2× eggs and bread"** (should split items).
+2. *"add buy filter for apartment A"* → **"buy filter"** (household); apartment **A** not stored on todo.
+3. *"let's make curry with rice tonight"* → meal lookup failed; DB has **"Curry with rice"** — trailing *"tonight"* breaks match.
+4. Relative reminder word order: *"remind me **to** leave my boyfriend **in 2 minutes**"* → rejected; *"remind me **in 2 minutes that** …"* works.
+5. *"add doctor appointment friday"* → no **Friday due date**; category maintenance (not admin).
+6. Rename reply redundant: *"Updated … — renamed to finish power bi report"* (same text twice).
+7. **Stale DB junk** from older sessions still visible early (*"empty the todo list"* as tasks, duplicate pay rent, old milk due dates) — cleared mid-test but worth a one-time cleanup.
+
+**Suggested next fixes**
+- [x] Split compound shopping adds (*"eggs and bread"*)
+- [x] Strip *"tonight/today"* before `plan_meal` name lookup
+- [x] Relative reminder: *"remind me to X in N minutes"* word order
+- [x] Parse *"appointment friday"* / trailing weekday on task adds
+- [x] Apartment hint on add todos — show `[a]` in add reply
+- [x] Cleaner rename confirmation message
 
 ---
 

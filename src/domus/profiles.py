@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from domus import db
+from domus import db, food_db
 
 
 def touch_user(
@@ -26,11 +26,13 @@ def format_profile(profile: db.UserProfile) -> str:
         lines.append(f"• Diet: {profile.diet}")
     if profile.allergies:
         lines.append(f"• Allergies: {profile.allergies}")
+    if profile.likes:
+        lines.append(f"• Likes: {profile.likes}")
     if profile.dislikes:
         lines.append(f"• Dislikes: {profile.dislikes}")
     if len(lines) == 1:
         lines.append("• No preferences saved yet.")
-        lines.append('Try: "Domus, I\'m vegetarian" or "Domus, my apartment is A".')
+        lines.append('Try: "Domus, I\'m vegetarian" or "I really like currywurst".')
     return "\n".join(lines)
 
 
@@ -47,7 +49,7 @@ def handle_update_profile(intent, db_path: Path, telegram_user_id: int) -> str:
         return "I couldn't find your profile."
 
     field = intent.category or "diet"
-    allowed = {"apartment", "diet", "allergies", "dislikes"}
+    allowed = {"apartment", "diet", "allergies", "dislikes", "likes"}
     if field not in allowed:
         return f"I can't update profile field {field!r} yet."
 
@@ -60,9 +62,44 @@ def handle_update_profile(intent, db_path: Path, telegram_user_id: int) -> str:
     return f"Updated your {label} to {value!r}."
 
 
+def handle_log_preference(intent, db_path: Path, telegram_user_id: int) -> str:
+    profile = db.get_user_profile(db_path, telegram_user_id)
+    if profile is None:
+        return "I couldn't find your profile."
+
+    value = (intent.item or "").strip()
+    if not value:
+        return "What should I remember that you like?"
+
+    db.append_user_profile_list(db_path, telegram_user_id, "likes", value)
+    food_db.init_food_tables(db_path)
+    food = food_db.add_custom_food(db_path, value)
+    return (
+        f'Got it — I\'ll remember you like {value!r}. '
+        f'Added "{food.name}" to your meal ideas.'
+    )
+
+
+def handle_log_dispreference(intent, db_path: Path, telegram_user_id: int) -> str:
+    profile = db.get_user_profile(db_path, telegram_user_id)
+    if profile is None:
+        return "I couldn't find your profile."
+
+    value = (intent.item or "").strip()
+    if not value:
+        return "What should I remember that you don't like?"
+
+    db.append_user_profile_list(db_path, telegram_user_id, "dislikes", value)
+    return f"Got it — I'll remember you don't like {value!r}."
+
+
 def handle_intent(intent, db_path: Path, telegram_user_id: int) -> str:
     if intent.name == "show_profile":
         return handle_show_profile(db_path, telegram_user_id)
     if intent.name == "update_profile":
         return handle_update_profile(intent, db_path, telegram_user_id)
+    if intent.name == "log_preference":
+        return handle_log_preference(intent, db_path, telegram_user_id)
+    if intent.name == "log_dispreference":
+        return handle_log_dispreference(intent, db_path, telegram_user_id)
     return ""
