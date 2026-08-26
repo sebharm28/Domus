@@ -68,6 +68,19 @@ def parse_category_hint(text: str) -> tuple[str, str | None]:
     return cleaned, match.group(1).lower()
 
 
+def parse_apartment_hint(text: str) -> tuple[str, str | None]:
+    match = re.search(
+        r"\b(?:for|at)\s+apartment\s+([a-z0-9]+)\b",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return text, None
+    apartment = match.group(1).lower()
+    cleaned = (text[: match.start()] + text[match.end() :]).strip(" ,:-")
+    return cleaned, apartment
+
+
 def extract_due_date_from_message(text: str, today: date | None = None) -> str | None:
     """Find a due date anywhere in the message, including follow-up clauses."""
     _, due = parse_due_date(text, today)

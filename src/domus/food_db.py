@@ -148,7 +148,10 @@ def suggest_foods(
     count: int = 3,
     *,
     exclude_ids: set[int] | None = None,
+    profiles: list | None = None,
 ) -> list[Food]:
+    from domus.diet import filter_foods_for_household
+
     recent = recent_food_ids(db_path)
     blocked = recent | (exclude_ids or set())
     candidates = [food for food in list_foods(db_path, meal_type) if food.id not in blocked]
@@ -156,6 +159,11 @@ def suggest_foods(
         candidates = [food for food in list_foods(db_path, meal_type) if food.id not in (exclude_ids or set())]
     if not candidates:
         candidates = list_foods(db_path, meal_type)
+    candidates = filter_foods_for_household(candidates, profiles or [])
+    if not candidates:
+        candidates = [food for food in list_foods(db_path, meal_type) if food.id not in blocked]
+        if not candidates:
+            candidates = list_foods(db_path, meal_type)
     if not candidates:
         return []
     random.shuffle(candidates)

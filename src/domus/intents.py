@@ -8,10 +8,11 @@ import httpx
 
 from domus.categories import infer_category
 from domus.config import Settings
-from domus.dates import parse_category_hint, parse_due_date, extract_due_date_from_message
+from domus.dates import parse_category_hint, parse_due_date, extract_due_date_from_message, parse_apartment_hint
 from domus.natural_language import try_parse_natural_add
 from domus.meals import _extract_missing_meal_query
 from domus.recurrence import parse_reminder_phrase
+from domus.relative_reminders import parse_relative_reminder_phrase
 from domus.structured_add import try_parse_structured_add
 from domus.text_utils import sanitize_command
 
@@ -32,9 +33,12 @@ IntentName = Literal[
     "show_meal_plan",
     "missing_ingredients",
     "add_recurring_reminder",
+    "add_relative_reminder",
     "list_reminders",
     "remove_reminder",
     "daily_briefing",
+    "update_profile",
+    "show_profile",
     "help",
     "greeting",
     "thanks",
@@ -56,9 +60,12 @@ VALID_INTENTS = {
     "show_meal_plan",
     "missing_ingredients",
     "add_recurring_reminder",
+    "add_relative_reminder",
     "list_reminders",
     "remove_reminder",
     "daily_briefing",
+    "update_profile",
+    "show_profile",
     "help",
     "greeting",
     "thanks",
@@ -70,9 +77,12 @@ VALID_INTENTS = {
 class Intent:
     name: IntentName
     item: str | None = None
+    new_item: str | None = None
     due_date: str | None = None
     category: str | None = None
+    apartment: str | None = None
     recurrence: str | None = None
+    delay_minutes: int | None = None
 
 
 SYSTEM_PROMPT = """You parse household assistant commands for a Telegram bot.
@@ -86,7 +96,9 @@ Rules:
 - add_todo: add a task or shopping item; extract due_date and category when mentioned
 - complete_todo: mark an item as done or bought
 - remove_todo: remove an item from the list without marking done
-- update_todo: fix the due date or focus on a recent task (e.g. "I said the task is for tomorrow", "I meant going to the bank")
+- update_todo: fix due date, rename, or recategorize a recent task
+- update_profile: save user preferences (diet, apartment, allergies)
+- show_profile: show saved preferences for the speaker
 - list_todos: show open items
 - export_list: export the list as plain text or CSV (item field "csv" for CSV format)
 - clear_shopping_list: wipe all open shopping items
@@ -128,9 +140,24 @@ def _default_list_category(normalized: str) -> str | None:
     return None
 
 
+def _looks_like_add_message(normalized: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(?:add|put)\s+.+?\s+(?:to|on)\s+(?:the\s+)?(?:list|todo|shopping)",
+            normalized,
+        )
+        or re.search(r"\bwe need\s+", normalized)
+    )
+
+
 def _parse_correction_intents(text: str) -> list[Intent] | None:
     normalized = sanitize_command(text).strip().lower().rstrip(".!?")
     due = extract_due_date_from_message(text)
+
+    if _looks_like_add_message(normalized) and not re.search(
+        r"\bi (?:said|meant)\b", normalized
+    ):
+        return None
 
     if re.search(
         r"\b(?:i said|i meant)(?: to say)?(?: that)?(?: the task is| it is| that's)?(?: for)?\s*tomorrow\b",
@@ -149,6 +176,85 @@ def _parse_correction_intents(text: str) -> list[Intent] | None:
     return None
 
 
+def _parse_edit_intents(text: str) -> list[Intent] | None:
+    normalized = sanitize_command(text).strip().lower().rstrip(".!?")
+    due = extract_due_date_from_message(text)
+
+    if re.search(
+        r"\b(?:actually|that(?:'s| is)?|it(?:'s| is)?)\s+(?:due |for )?tomorrow\b",
+        normalized,
+    ):
+        return [Intent(name="update_todo", due_date=due or extract_due_date_from_message("tomorrow"))]
+
+    rename_match = re.search(
+        r"\b(?:rename|change|call)\s+(?:that|it|the task)\s+(?:to|as)\s+(.+)$",
+        normalized,
+    )
+    if rename_match:
+        return [Intent(name="update_todo", new_item=_normalize_item(rename_match.group(1)))]
+
+    category_match = re.search(
+        r"\b(?:change|make|set)\s+(?:that|it|the task)\s+(?:to\s+)?(?:an?\s+)?"
+        r"(?:category\s+)?(shopping|household|admin|maintenance|personal|general)\b",
+        normalized,
+    )
+    if category_match:
+        return [Intent(name="update_todo", category=category_match.group(1))]
+
+    category_short = re.search(
+        r"\b(?:that(?:'s| is)?|it(?:'s| is)?)\s+(?:an?\s+)?"
+        r"(shopping|household|admin|maintenance|personal|general)\b",
+        normalized,
+    )
+    if category_short:
+        return [Intent(name="update_todo", category=category_short.group(1))]
+
+    return None
+
+
+def _parse_profile_intents(text: str) -> list[Intent] | None:
+    normalized = sanitize_command(text).strip().lower().rstrip(".!?")
+
+    if re.search(r"\b(?:my profile|who am i|show my profile)\b", normalized):
+        return [Intent(name="show_profile")]
+
+    diet_match = re.search(r"\bi(?:'m| am)\s+(vegetarian|vegan|pescatarian)\b", normalized)
+    if diet_match:
+        return [Intent(name="update_profile", item=diet_match.group(1), category="diet")]
+
+    apartment_match = re.search(r"\bmy apartment is\s+(.+)$", normalized)
+    if apartment_match:
+        return [
+            Intent(
+                name="update_profile",
+                item=_normalize_item(apartment_match.group(1)),
+                category="apartment",
+            )
+        ]
+
+    allergy_match = re.search(r"\bi(?:'m| am)?\s*allergic to\s+(.+)$", normalized)
+    if allergy_match:
+        return [
+            Intent(
+                name="update_profile",
+                item=_normalize_item(allergy_match.group(1)),
+                category="allergies",
+            )
+        ]
+
+    dislike_match = re.search(r"\bi(?:'| do)? not like\s+(.+)$", normalized)
+    if dislike_match:
+        return [
+            Intent(
+                name="update_profile",
+                item=_normalize_item(dislike_match.group(1)),
+                category="dislikes",
+            )
+        ]
+
+    return None
+
+
 def _merge_due_dates(text: str, intents: list[Intent]) -> list[Intent]:
     due = extract_due_date_from_message(text)
     if not due:
@@ -160,9 +266,12 @@ def _merge_due_dates(text: str, intents: list[Intent]) -> list[Intent]:
                 Intent(
                     name=intent.name,
                     item=intent.item,
+                    new_item=intent.new_item,
                     due_date=due,
                     category=intent.category,
+                    apartment=intent.apartment,
                     recurrence=intent.recurrence,
+                    delay_minutes=intent.delay_minutes,
                 )
             )
         else:
@@ -172,6 +281,7 @@ def _merge_due_dates(text: str, intents: list[Intent]) -> list[Intent]:
 
 def _build_add_intent(raw_item: str, default_category: str | None = None) -> Intent:
     text, category_hint = parse_category_hint(raw_item)
+    text, apartment_hint = parse_apartment_hint(text)
     text, due_date = parse_due_date(text)
     text = re.sub(r"\s+", " ", text).strip(" ,:-")
     return Intent(
@@ -179,13 +289,51 @@ def _build_add_intent(raw_item: str, default_category: str | None = None) -> Int
         item=text or None,
         due_date=due_date,
         category=infer_category(text, category_hint or default_category),
+        apartment=apartment_hint,
     )
 
 
+def _parse_relative_intents(text: str) -> list[Intent] | None:
+    normalized = sanitize_command(text).strip().lower().rstrip(".!?")
+    relative = parse_relative_reminder_phrase(normalized)
+    if relative:
+        task, delay_minutes = relative
+        return [Intent(name="add_relative_reminder", item=task, delay_minutes=delay_minutes)]
+    return None
+
+
+def _finalize_add_intents(intents: list[Intent]) -> list[Intent]:
+    finalized: list[Intent] = []
+    for intent in intents:
+        if intent.name != "add_todo" or not intent.item:
+            finalized.append(intent)
+            continue
+        text, apartment = parse_apartment_hint(intent.item)
+        text, category_hint = parse_category_hint(text)
+        text, due_date = parse_due_date(text)
+        text = re.sub(r"\s+", " ", text).strip(" ,:-")
+        finalized.append(
+            Intent(
+                name="add_todo",
+                item=text or None,
+                due_date=intent.due_date or due_date,
+                category=intent.category or infer_category(text, category_hint),
+                apartment=intent.apartment or apartment,
+            )
+        )
+    return finalized
+
+
 def _rules_resolve(text: str) -> list[Intent]:
-    correction = _parse_correction_intents(text)
-    if correction:
-        return correction
+    for parser in (
+        _parse_correction_intents,
+        _parse_edit_intents,
+        _parse_profile_intents,
+        _parse_relative_intents,
+    ):
+        parsed = parser(text)
+        if parsed:
+            return parsed
     return _parse_with_rules(text)
 
 
@@ -260,9 +408,12 @@ def _intent_from_dict(data: dict) -> Intent:
     return Intent(
         name=intent_name,
         item=item,
+        new_item=_normalize_item(data.get("new_item")),
         due_date=due_date,
         category=category,
+        apartment=data.get("apartment"),
         recurrence=data.get("recurrence"),
+        delay_minutes=data.get("delay_minutes"),
     )
 
 
@@ -354,6 +505,11 @@ def _parse_clause_intents(normalized: str) -> list[Intent]:
     if re.search(r"\b(help|what can you do)\b", normalized):
         return [Intent(name="help")]
 
+    relative = parse_relative_reminder_phrase(normalized)
+    if relative:
+        task, delay_minutes = relative
+        return [Intent(name="add_relative_reminder", item=task, delay_minutes=delay_minutes)]
+
     recurring = parse_reminder_phrase(normalized)
     if recurring:
         task, recurrence = recurring
@@ -411,6 +567,21 @@ def _parse_clause_intents(normalized: str) -> list[Intent]:
         export_format = "csv" if "csv" in normalized else "text"
         category = "shopping" if "shopping" in normalized else None
         return [Intent(name="export_list", item=export_format, category=category)]
+
+    category_list = re.search(
+        r"(?:show|what(?:'s| is) on)(?: the)?(?: my)? (?:the )?"
+        r"(shopping|household|admin|maintenance|personal|general)(?:\s+list|\s+tasks)?",
+        normalized,
+    )
+    if category_list:
+        return [Intent(name="list_todos", category=category_list.group(1))]
+
+    apartment_list = re.search(
+        r"(?:show|what(?:'s| is) on).*?\bapartment\s+([a-z0-9]+)",
+        normalized,
+    )
+    if apartment_list:
+        return [Intent(name="list_todos", apartment=apartment_list.group(1))]
 
     if re.search(
         r"(?:show(?: me)?(?: everything| the)?(?: on)?(?: the)? (?:list|shopping list|todo list|tasks)|"
@@ -505,9 +676,13 @@ def _parse_with_rules(text: str) -> list[Intent]:
     if structured:
         item, due_date, category = structured
         intents = [Intent(name="add_todo", item=item, due_date=due_date, category=category)]
-        return _merge_due_dates(cleaned, intents)
+        return _finalize_add_intents(_merge_due_dates(cleaned, intents))
 
-    if not re.match(r"^(?:please |could u |could you |)?(?:add|put|remove|delete|show|list|what|i said|i meant)", cleaned, re.IGNORECASE):
+    if not re.match(
+        r"^(?:please |could u |could you |)?(?:add|put|remove|delete|show|list|what|i said|i meant|remind)",
+        cleaned,
+        re.IGNORECASE,
+    ):
         natural = try_parse_natural_add(cleaned)
         if natural:
             intents = [
@@ -518,7 +693,7 @@ def _parse_with_rules(text: str) -> list[Intent]:
                     category=natural.category,
                 )
             ]
-            return _merge_due_dates(cleaned, intents)
+            return _finalize_add_intents(_merge_due_dates(cleaned, intents))
 
     intents: list[Intent] = []
     for clause in _split_clauses(cleaned):
@@ -526,4 +701,4 @@ def _parse_with_rules(text: str) -> list[Intent]:
         intents.extend(_parse_clause_intents(normalized))
 
     intents = _merge_due_dates(cleaned, intents)
-    return intents or [Intent(name="unknown")]
+    return _finalize_add_intents(intents) or [Intent(name="unknown")]

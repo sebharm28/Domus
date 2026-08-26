@@ -1,0 +1,245 @@
+DOMUS × BRING! — DISCUSSION NOTES
+==================================
+Started: 25 August 2026
+Author: Sebastian (+ assistant notes)
+
+Context: We use Bring! as our real shopping-list UI. Domus already manages
+tasks, meals, reminders, and a SQLite shopping list via Telegram. Sebastian
+likes Bring!'s native app experience and wonders whether Domus should sync there
+instead of (or in addition to) growing its own list UI — and whether the
+side project could eventually become a broader "Domus household app."
+
+
+================================================================================
+WHY THIS COMES UP NOW
+================================================================================
+
+Telegram is a great *input layer*:
+  - always there in the group chat
+  - voice-friendly (future)
+  - no install friction for a bot
+
+But Telegram is a weak *shopping UI*:
+  - long lists are hard to scan in chat
+  - no satisfying "tap to check off" while walking the aisle
+  - export/clear helps, but it's still text in a thread
+
+Bring! solves the in-store experience well:
+  - fast add/check-off
+  - shared household list
+  - categories, suggestions, recipe import
+  - you already use it every week
+
+The tension: Domus is becoming the household *brain* (NLP, meals, reminders,
+briefings). Bring! is the shopping *display*. That's actually a sensible split —
+if we can connect them reliably.
+
+
+================================================================================
+BRING! API — WHAT EXISTS (AND WHAT DOESN'T)
+================================================================================
+
+Official public API: **No.**
+  Bring! (getbring.com) does not publish developer docs or a supported API.
+  You won't get OAuth, webhooks, or a partner program by emailing them today.
+
+Unofficial reverse-engineered access: **Yes, and it's real.**
+  - Python package: bring-api (PyPI, MIT, actively maintained as of 2026)
+    https://github.com/miaucl/bring-api
+    https://miaucl.github.io/bring-api/
+  - Used in production by Home Assistant's official Bring! integration
+    https://www.home-assistant.io/integrations/bring/
+  - Auth: email + password of a normal Bring! account (same as the mobile app)
+  - Async (aiohttp); supports list load, add/remove/complete items, batch updates
+  - Even an MCP server exists (bring--mcp) for AI assistants talking to Bring!
+
+Important caveats:
+  1. **Unofficial = fragile.** Bring can change endpoints anytime; the library
+     usually catches up, but Domus would inherit that maintenance risk.
+  2. **No push from Bring to Domus.** HA polls every ~90s. Real-time sync is
+     one-way-ish unless we poll too.
+  3. **Two sources of truth.** If someone edits only in Bring and only in
+     Domus, lists diverge unless we pick a master or sync carefully.
+  4. **Quantity model differs.** Domus now has a SQLite `quantity` column;
+     Bring uses item name + optional "spec" (often used like a note/amount).
+     Mapping "2× milk" → Bring is doable but not 1:1 elegant.
+  5. **Terms of service.** Automating a consumer account may be grey area;
+     fine for a personal household bot, risky if Domus ever became a product.
+
+
+Bottom line for Sebastian's web search: you were right that there's no *official*
+API. You were not stuck — there's a well-trodden unofficial path, but it's a
+bridge, not a partnership.
+
+
+================================================================================
+ASSISTANT OPINION — ARCHITECTURE, NOT HYPE
+================================================================================
+
+Short version:
+  **Keep Telegram + Domus as the command layer. Treat Bring! as an optional
+  shopping sink (and maybe source) for the list category only. Don't rebuild
+  Bring! inside Domus. Don't rush a native "Domus app" until the household
+  workflows are stable.**
+
+Longer reasoning:
+
+1. Split responsibilities on purpose
+   ┌─────────────────┐     natural language      ┌──────────────┐
+   │  Telegram       │ ────────────────────────► │  Domus       │
+   │  (talk to it)   │                           │  (brain)     │
+   └─────────────────┘                           └──────┬───────┘
+                                                          │
+                     todos, admin, meals, reminders       │
+                     briefing, recurring, corrections     │
+                                                          │ shopping only?
+                                                          ▼
+                                                   ┌──────────────┐
+                                                   │  Bring! app  │
+                                                   │  (shop UI)   │
+                                                   └──────────────┘
+
+   Domus should own: intent parsing, due dates, meal → ingredients logic,
+   briefings, privacy (/private), SQLite history, two-apartment logic (later).
+
+   Bring! should own: the tactile shopping experience you already like.
+
+2. A full "Domus household app" is a different product
+   Building your own app means: auth, sync, push notifications, offline,
+   App Store / Play Store, design, and maintaining parity with Bring! for
+   shopping — that's years of work for two people who mainly wanted a smart
+   group-chat helper. 
+
+==> REMARK SEBASTIAN: I would not use Bring anymore if we would have had our own app. Bring! is nice for shopping, but an app could be cool. I'll would like to assess the possibility.
+
+   The side project *can* get bigger, but the credible path is:
+     Phase A — Telegram bot (now)
+     Phase B — Bring! sync bridge for shopping (small, high value)
+     Phase C — read-only web dashboard or PWA for briefings/tasks (optional)
+     Phase D — native app only if a clear gap remains that Bring + Telegram
+               can't cover (unlikely for shopping)
+
+3. Bring sync is the highest ROI "next platform" step
+   Compared to writing an app, wiring bring-api behind a feature flag is maybe
+   a weekend prototype + a week to harden:
+     - BRING_EMAIL / BRING_PASSWORD / BRING_LIST_NAME in .env
+     - On add_todo (shopping) → push item to Bring
+     - Optional: poll Bring every N minutes → mirror into SQLite for briefing
+     - On complete in Domus → complete in Bring (if item mapping exists)
+
+   You'd still say "Domus, add milk" in Telegram; your girlfriend sees it in
+   Bring! seconds later. That's the dream scenario.
+
+4. When *not* to sync Bring
+   - If you want Domus to stay fully local/offline with zero third-party deps
+   - If duplicate lists confuse the household ("which app is truth?")
+   - If Bring account credentials on the Pi feel wrong (use a dedicated shared
+     household Bring account, not personal passwords in plain .env)
+
+5. Telegram stays valuable even with Bring
+   Bring! doesn't do: "remind us every Tuesday", "plan meals for the week",
+   "what's on today?", bank errands with due dates, /private admin tasks.
+   Telegram remains the universal remote control.
+
+
+================================================================================
+SYNC DESIGN OPTIONS (IF WE TRY IT)
+================================================================================
+
+Option A — Bring as write-only mirror (simplest)
+  Domus shopping adds → push to Bring.
+  Completes/removes in Domus → push to Bring.
+  Bring edits ignored (Bring is display + manual tweaks in store).
+  Pros: minimal conflict logic. Cons: edits in Bring don't flow back.
+
+Option B — Bring as master for shopping
+  Domus stops storing open shopping rows; always reads Bring list for briefing.
+  Pros: single truth. Cons: briefing/offline/meal dedup all depend on Bring
+  uptime; more API calls.
+
+Option C — Two-way sync with Domus SQLite master (hard)
+  Bi-directional merge, conflict resolution, uuid mapping table.
+  Pros: theoretically correct. Cons: overkill for two users; HA doesn't even
+  try this — it polls and overwrites.
+
+Recommendation for a household of two: **Option A first**, maybe poll Bring
+only for `list_todos` / briefing preview if needed.
+
+
+================================================================================
+MAPPING DOMUS FEATURES → BRING!
+================================================================================
+
+| Domus feature              | Bring! fit                          |
+|----------------------------|-------------------------------------|
+| add 2 milk                 | add item; spec = "2" or "2×"        |
+| duplicate merge            | Bring dedupes by item name loosely  |
+| export list                | less needed if Bring is the UI      |
+| clear shopping list        | map to clear list API (if exposed)  |
+| check off / bought         | complete_item in bring-api          |
+| meal plan → ingredients    | big win — auto-push missing items   |
+| admin/personal todos       | stay in Domus only                  |
+| daily briefing shopping    | fetch from Bring or local cache     |
+
+
+================================================================================
+RISKS & OPEN QUESTIONS (FOR SEBASTIAN)
+================================================================================
+
+  [ ] Do you both agree Bring! is the canonical shopping UI if we sync?
+  [ ] Shared Bring account vs linking personal accounts to one list?
+  [ ] Comfortable storing Bring credentials in .env on the Pi (gitignored)? ==> Yes, we are going to store it in the .env
+  [ ] Accept unofficial API breakage 1–2×/year? ==> That's the biggest question... I don't like it when things are breaking
+  [ ] Should Domus SQLite shopping table become a cache only, or stay primary
+      with Bring as mirror? 
+  [ ] German item names — Bring handles DE well; Domus NLP already mixed EN/DE
+  [ ] What would a "Domus app" need that Telegram + Bring cannot do?
+
+  Future product question:
+  If Domus grew beyond your household, relying on Bring's unofficial API is a
+  dead end for distribution. A real product would need either official Bring
+  partnership (unlikely at small scale) or your own list UI eventually.
+
+
+================================================================================
+POSSIBLE ROADMAP (OPINIONATED)
+================================================================================
+
+Near term (stay focused):
+  1. Finish Domus core on Telegram — person context, relative reminders, memory
+  2. Spike: `domus/bring_sync.py` prototype behind BRING_ENABLED=0/1
+  3. One shared list name in .env; log sync errors, never fail the Telegram reply
+
+Medium term:
+  4. Meal plan → push missing ingredients to Bring automatically
+  5. Briefing reads shopping preview from Bring (or last sync cache)
+  6. Optional: simple static web page on the Pi for read-only task view
+     (no app store; just `http://pi.local:8080/briefing`)
+
+Long term (only if motivated):
+  7. PWA with checklist UX *only if* Bring sync proves insufficient
+  8. Never rebuild Bring!'s polish — partner or mirror instead
+
+
+================================================================================
+ONE-SENTENCE SUMMARY
+================================================================================
+
+You don't need to build a Domus shopping app yet: use Telegram to talk to the
+household brain and optionally mirror shopping into Bring! via the unofficial
+bring-api — that's the pragmatic path from side project to something bigger
+without throwing away an app you already love.
+
+
+================================================================================
+REFERENCES
+================================================================================
+
+  bring-api (unofficial Python):  https://github.com/miaucl/bring-api
+  PyPI:                           https://pypi.org/project/bring-api/
+  Home Assistant integration:     https://www.home-assistant.io/integrations/bring/
+  Bring! product:                 https://www.getbring.com/
+
+
+Last updated: 25 August 2026
+Related docs: domus_notes.txt (canonical summary), log_discussion.md

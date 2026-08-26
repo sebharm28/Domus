@@ -8,9 +8,11 @@ from domus.config import Settings
 from domus.dates import format_due_date
 from domus.db import (
     advance_reminder,
+    list_due_one_shot_reminders,
     list_due_recurring_reminders,
     list_due_todos_for_reminder,
     list_notification_chats,
+    mark_one_shot_sent,
     mark_todo_reminded,
 )
 from domus.recurrence import format_recurrence
@@ -23,11 +25,12 @@ async def send_due_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
     today = date.today()
     due_todos = list_due_todos_for_reminder(settings.database_path, today)
     due_recurring = list_due_recurring_reminders(settings.database_path, today)
-    if not due_todos and not due_recurring:
+    due_one_shot = list_due_one_shot_reminders(settings.database_path)
+    if not due_todos and not due_recurring and not due_one_shot:
         return
 
     chat_ids = list_notification_chats(settings.database_path)
-    if not chat_ids:
+    if not due_one_shot and not chat_ids:
         logger.warning("Due reminders found but no notification chats are subscribed")
         return
 
@@ -59,6 +62,19 @@ async def send_due_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
                 )
         advance_reminder(settings.database_path, reminder.id)
         logger.info("Sent recurring reminder %s to %d chat(s)", reminder.id, len(chat_ids))
+
+    for reminder in due_one_shot:
+        message = f'Reminder: "{reminder.text}"'
+        try:
+            await context.bot.send_message(chat_id=reminder.chat_id, text=message)
+        except Exception:
+            logger.exception(
+                "Failed to send one-shot reminder %s to chat %s",
+                reminder.id,
+                reminder.chat_id,
+            )
+        mark_one_shot_sent(settings.database_path, reminder.id)
+        logger.info("Sent one-shot reminder %s to chat %s", reminder.id, reminder.chat_id)
 
 
 async def send_morning_briefing(context: ContextTypes.DEFAULT_TYPE) -> None:

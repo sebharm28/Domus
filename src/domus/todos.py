@@ -9,6 +9,8 @@ from domus.shopping import (
     parse_item_quantity,
 )
 from domus.briefing import handle_daily_briefing
+from domus.context import record_intent_context, resolve_context_todo_id
+from domus import profiles as profile_handlers
 from domus.meals import (
     handle_log_meal,
     handle_missing_ingredients,
@@ -22,6 +24,7 @@ from domus.reminders import (
     handle_list_reminders,
     handle_remove_reminder,
 )
+from domus.relative_reminders import handle_add_relative_reminder
 
 
 def format_todo_list(todos: list[db.Todo]) -> str:
@@ -38,7 +41,8 @@ def format_todo_list(todos: list[db.Todo]) -> str:
         for todo in grouped[category]:
             due = format_due_date(todo.due_date)
             label = format_shopping_display(todo) if todo.category == "shopping" else todo.text
-            lines.append(f"• {label} — due: {due}")
+            apt = f" [{todo.apartment}]" if todo.apartment else ""
+            lines.append(f"• {label}{apt} — due: {due}")
     return "\n".join(lines)
 
 
@@ -55,7 +59,9 @@ def _add_or_merge_todo(
     *,
     due_date: str | None,
     category: str,
-) -> str:
+    created_by_user_id: int | None = None,
+    apartment: str | None = None,
+) -> tuple[str, db.Todo | None]:
     item_name, quantity = parse_item_quantity(item)
     add_qty = quantity if quantity is not None else 1
     if category == "shopping":
@@ -69,7 +75,7 @@ def _add_or_merge_todo(
                 quantity=new_qty,
             )
             label = format_shopping_display(updated)
-            return f'Updated to {label} on the shopping list.'
+            return f'Updated to {label} on the shopping list.', updated
 
     todo = db.add_todo(
         db_path,
@@ -78,8 +84,10 @@ def _add_or_merge_todo(
         due_date=due_date,
         category=category,
         quantity=add_qty if category == "shopping" else None,
+        created_by_user_id=created_by_user_id,
+        apartment=apartment,
     )
-    return _format_added(todo)
+    return _format_added(todo), todo
 
 
 def format_export_list(
@@ -129,7 +137,14 @@ def handle_clear_shopping_list(db_path: Path) -> str:
     return f"Cleared {count} {noun} from the shopping list."
 
 
-def handle_intents(intents: list[Intent], db_path: Path, created_by: str) -> str:
+def handle_intents(
+    intents: list[Intent],
+    db_path: Path,
+    created_by: str,
+    *,
+    chat_id: int | None = None,
+    telegram_user_id: int | None = None,
+) -> str:
     ordered = sorted(
         intents,
         key=lambda intent: 1 if intent.name == "list_todos" else 0,
@@ -138,7 +153,13 @@ def handle_intents(intents: list[Intent], db_path: Path, created_by: str) -> str
     for intent in ordered:
         if intent.name == "unknown":
             continue
-        reply = handle_intent(intent, db_path, created_by)
+        reply = handle_intent(
+            intent,
+            db_path,
+            created_by,
+            chat_id=chat_id,
+            telegram_user_id=telegram_user_id,
+        )
         if reply and reply not in replies:
             replies.append(reply)
 
@@ -163,7 +184,14 @@ def handle_intents(intents: list[Intent], db_path: Path, created_by: str) -> str
     )
 
 
-def handle_intent(intent: Intent, db_path: Path, created_by: str) -> str:
+def handle_intent(
+    intent: Intent,
+    db_path: Path,
+    created_by: str,
+    *,
+    chat_id: int | None = None,
+    telegram_user_id: int | None = None,
+) -> str:
     if intent.name == "greeting":
         return "Hi! What should I add, remove, or remind you about?"
 
@@ -190,7 +218,18 @@ def handle_intent(intent: Intent, db_path: Path, created_by: str) -> str:
         )
 
     if intent.name == "list_todos":
-        return format_todo_list(db.list_open_todos(db_path))
+        todos = db.list_open_todos(
+            db_path,
+            category=intent.category,
+            apartment=intent.apartment,
+        )
+        if not todos:
+            if intent.category:
+                return f"No open {intent.category} tasks."
+            if intent.apartment:
+                return f"No open tasks for apartment {intent.apartment}."
+            return "The list is empty."
+        return format_todo_list(todos)
 
     if intent.name == "export_list":
         export_format = "csv" if (intent.item or "").lower() == "csv" else "text"
@@ -207,13 +246,20 @@ def handle_intent(intent: Intent, db_path: Path, created_by: str) -> str:
         return handle_daily_briefing(db_path)
 
     if intent.name == "suggest_meal":
-        return handle_suggest_meal("", db_path, meal_type=intent.item)
+        profiles = db.list_user_profiles(db_path)
+        return handle_suggest_meal(
+            "",
+            db_path,
+            meal_type=intent.item,
+            profiles=profiles,
+        )
 
     if intent.name == "plan_meal":
         return handle_plan_meal(intent.item or "", db_path, created_by, meal_name=intent.item)
 
     if intent.name == "plan_week":
-        return handle_plan_week(db_path, created_by)
+        profiles = db.list_user_profiles(db_path)
+        return handle_plan_week(db_path, created_by, profiles=profiles)
 
     if intent.name == "show_meal_plan":
         return handle_show_meal_plan(db_path)
@@ -230,6 +276,18 @@ def handle_intent(intent: Intent, db_path: Path, created_by: str) -> str:
             recurrence=intent.recurrence,
         )
 
+    if intent.name == "add_relative_reminder":
+        if chat_id is None:
+            return "I need a group chat to schedule a timed reminder."
+        return handle_add_relative_reminder(
+            intent.item or "",
+            db_path,
+            created_by,
+            chat_id=chat_id,
+            task=intent.item,
+            delay_minutes=intent.delay_minutes,
+        )
+
     if intent.name == "list_reminders":
         return handle_list_reminders(db_path)
 
@@ -242,13 +300,18 @@ def handle_intent(intent: Intent, db_path: Path, created_by: str) -> str:
     if intent.name == "add_todo":
         if not intent.item:
             return "What should I add?"
-        return _add_or_merge_todo(
+        reply, todo = _add_or_merge_todo(
             db_path,
             intent.item,
             created_by,
             due_date=intent.due_date,
             category=intent.category or "general",
+            created_by_user_id=telegram_user_id,
+            apartment=intent.apartment or _default_apartment(db_path, telegram_user_id),
         )
+        if chat_id is not None and todo is not None:
+            record_intent_context(db_path, chat_id, intent, todo_id=todo.id)
+        return reply
 
     if intent.name == "complete_todo":
         if not intent.item:
@@ -256,6 +319,8 @@ def handle_intent(intent: Intent, db_path: Path, created_by: str) -> str:
         todo = db.complete_todo(db_path, intent.item)
         if todo is None:
             return f'I could not find an open item matching "{intent.item}".'
+        if chat_id is not None:
+            record_intent_context(db_path, chat_id, intent, todo_id=todo.id)
         return f'Checked off "{todo.text}".'
 
     if intent.name == "remove_todo":
@@ -264,15 +329,66 @@ def handle_intent(intent: Intent, db_path: Path, created_by: str) -> str:
         todo = db.remove_todo(db_path, intent.item)
         if todo is None:
             return f'I could not find an open item matching "{intent.item}".'
+        if chat_id is not None:
+            record_intent_context(db_path, chat_id, intent, clear_todo=True)
         return f'Removed "{todo.text}" from the list.'
 
     if intent.name == "update_todo":
-        return handle_update_todo(intent, db_path)
+        return handle_update_todo(intent, db_path, chat_id)
+
+    if intent.name in ("update_profile", "show_profile"):
+        if telegram_user_id is None:
+            return "I couldn't identify who sent that message."
+        return profile_handlers.handle_intent(intent, db_path, telegram_user_id)
 
     return ""
 
 
-def handle_update_todo(intent: Intent, db_path: Path) -> str:
+def _default_apartment(db_path: Path, telegram_user_id: int | None) -> str | None:
+    if telegram_user_id is None:
+        return None
+    profile = db.get_user_profile(db_path, telegram_user_id)
+    return profile.apartment if profile else None
+
+
+def _resolve_update_target(
+    intent: Intent,
+    db_path: Path,
+    chat_id: int | None,
+) -> db.Todo | None:
+    context_id = resolve_context_todo_id(db_path, chat_id) if chat_id is not None else None
+
+    if intent.item and not intent.new_item and not intent.category:
+        if context_id is not None:
+            todo = db.get_open_todo(db_path, context_id)
+            if todo is not None:
+                return todo
+        return db.get_latest_open_todo_without_due(db_path) or db.get_latest_open_todo(db_path)
+
+    if context_id is not None:
+        todo = db.get_open_todo(db_path, context_id)
+        if todo is not None:
+            return todo
+
+    if intent.item and intent.item.lower() not in {
+        "that",
+        "it",
+        "this",
+        "the task",
+        "the other task",
+    }:
+        matches = db.find_open_todos_partial(db_path, intent.item)
+        if matches:
+            return matches[0]
+
+    return db.get_latest_open_todo_without_due(db_path) or db.get_latest_open_todo(db_path)
+
+
+def handle_update_todo(
+    intent: Intent,
+    db_path: Path,
+    chat_id: int | None = None,
+) -> str:
     replies: list[str] = []
 
     if intent.item:
@@ -281,20 +397,37 @@ def handle_update_todo(intent: Intent, db_path: Path) -> str:
             if wrong:
                 replies.append(f'Removed mistaken entry "{wrong.text}".')
 
-        matches = db.find_open_todos_partial(db_path, intent.item)
-        todo = matches[0] if matches else db.get_latest_open_todo_without_due(db_path)
-        if todo is None:
+    todo = _resolve_update_target(intent, db_path, chat_id)
+    if todo is None:
+        if intent.item:
             return f'I could not find a task matching "{intent.item}".'
-    else:
-        todo = db.get_latest_open_todo_without_due(db_path) or db.get_latest_open_todo(db_path)
-        if todo is None:
-            return "I couldn't find a recent task to update."
+        return "I couldn't find a recent task to update."
+
+    current = todo
+    changes: list[str] = []
+
+    new_text = intent.new_item
+    if not new_text and intent.item and not intent.category:
+        new_text = intent.item
+
+    if new_text:
+        current = db.update_todo(db_path, current.id, text=new_text)
+        changes.append(f'renamed to "{current.text}"')
 
     if intent.due_date:
-        updated = db.update_todo(db_path, todo.id, due_date=intent.due_date)
-        due = format_due_date(updated.due_date)
-        replies.append(f'Updated "{updated.text}" — due: {due}.')
+        current = db.update_todo(db_path, current.id, due_date=intent.due_date)
+        changes.append(f"due: {format_due_date(current.due_date)}")
+
+    if intent.category:
+        current = db.update_todo(db_path, current.id, category=intent.category)
+        changes.append(f"category: {current.category}")
+
+    if not changes:
+        replies.append(f'Got it — you mean "{current.text}".')
         return " ".join(replies)
 
-    replies.append(f'Got it — you mean "{todo.text}".')
+    if chat_id is not None:
+        record_intent_context(db_path, chat_id, intent, todo_id=current.id)
+
+    replies.append(f'Updated "{current.text}" — {"; ".join(changes)}.')
     return " ".join(replies)

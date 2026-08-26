@@ -106,7 +106,7 @@ class ShoppingMergeTests(unittest.TestCase):
             self.db_path.unlink()
 
     def test_duplicate_shopping_item_bumps_quantity(self) -> None:
-        first = _add_or_merge_todo(
+        first, todo = _add_or_merge_todo(
             self.db_path,
             "milk",
             "Alex",
@@ -114,7 +114,7 @@ class ShoppingMergeTests(unittest.TestCase):
             category="shopping",
         )
         self.assertIn("Added", first)
-        second = _add_or_merge_todo(
+        second, _ = _add_or_merge_todo(
             self.db_path,
             "milk",
             "Alex",
@@ -129,7 +129,7 @@ class ShoppingMergeTests(unittest.TestCase):
 
     def test_quantity_adds_to_existing_line(self) -> None:
         _add_or_merge_todo(self.db_path, "milk", "Alex", due_date=None, category="shopping")
-        updated = _add_or_merge_todo(
+        updated, _ = _add_or_merge_todo(
             self.db_path,
             "2 milk",
             "Alex",

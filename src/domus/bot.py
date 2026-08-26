@@ -78,6 +78,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     text = message.text.strip()
     chat = message.chat
     sender = message.from_user.full_name if message.from_user else "unknown"
+    telegram_user_id = message.from_user.id if message.from_user else 0
+    username = message.from_user.username if message.from_user else None
     reply_to_bot = bool(
         message.reply_to_message
         and message.reply_to_message.from_user
@@ -112,7 +114,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     try:
         await message.chat.send_action(ChatAction.TYPING)
         reply = await asyncio.wait_for(
-            route_message(request, sender, settings, private_mode=private_mode),
+            route_message(
+                request,
+                settings,
+                chat_id=chat.id,
+                telegram_user_id=telegram_user_id,
+                display_name=sender,
+                username=username,
+                private_mode=private_mode,
+            ),
             timeout=MESSAGE_TIMEOUT_SECONDS,
         )
     except asyncio.TimeoutError:

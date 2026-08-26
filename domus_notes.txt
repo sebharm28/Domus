@@ -347,13 +347,33 @@ First coding chunk before wave 2 (profiles, memory, redaction, JSON LLM):
 
 Run tests: PYTHONPATH=src python -m unittest discover -s tests
 
-Wave 2 (later):
-  - Per-user profiles (#7)
-  - Short-term conversation context / "brain" (#5)
-  - Natural-language task edits beyond update_todo (#6)
-  - Redaction patterns in .env (#3)
-  - OpenRouter JSON second-LLM repair (#4 — TBD)
-  - Voice input (#9 — deferred)
+Wave 2 (Aug 2026):
+  [x] Per-user profiles (#7) — users table, upsert on message, diet/apartment/allergies/dislikes
+  [x] Short-term conversation context / "brain" (#5) — chat_context, last_todo_id for edits
+  [x] Natural-language task edits (#6) — rename that, actually due tomorrow, category change
+  [ ] Redaction patterns in .env (#3)
+  [ ] OpenRouter JSON second-LLM repair (#4 — TBD)
+  [ ] Voice input (#9 — deferred)
+
+Wave 2b (Aug 2026):
+  [x] Diet filter in meal suggestions and weekly plan (household profiles)
+  [x] Apartment tag on tasks + default from user profile
+  [x] Category-filtered lists ("show admin tasks")
+  [x] Relative reminders ("remind me in 30 minutes")
+
+Profile commands (examples):
+  Domus, I'm vegetarian
+  Domus, my apartment is A
+  Domus, I'm allergic to nuts
+  Domus, show my profile
+
+Natural-language edits (examples):
+  Domus, show admin tasks
+  Domus, remind me in 30 minutes the oven is on
+  Domus, add buy filter for apartment A to the list
+  Domus, actually that's due tomorrow
+  Domus, change that to admin
+  Domus, I meant going to the bank   (uses last task from context, not latest bulk add)
 
 
 ================================================================================
@@ -408,6 +428,146 @@ What stays English for now (explicit)
 
 
 ================================================================================
+BRING! APP & DOMUS HOUSEHOLD APP (discussion — Aug 2026)
+================================================================================
+Status: **under discussion — no decision yet.** Full notes also in app_discussion.txt.
+
+We use Bring! as our native shopping-list UI (fast check-off in the store, shared
+household list). Domus handles NLP, meals, reminders, and tasks via Telegram.
+The question: should Domus mirror shopping into Bring! instead of growing its
+own list UI — and could Domus eventually become a broader household app?
+
+
+WHY TELEGRAM + BRING! TOGETHER
+------------------------------
+Telegram is a strong *input* layer (group chat, wake word, future voice).
+It is a weak *shopping* layer (long text threads, no aisle-friendly check-off).
+
+Bring! is the opposite: great in-store UX, weak as a household command center
+(no "remind us every Tuesday", no meal-plan logic, no admin todos with due dates).
+
+Sensible split if connected:
+  Telegram → talk to Domus (brain)
+  Domus    → todos, meals, reminders, briefing, SQLite history
+  Bring!   → shopping display only (optional mirror target)
+
+
+HOW THE UNOFFICIAL BRING! API WORKS
+-----------------------------------
+Bring! Labs does **not** publish an official developer API (no OAuth, no webhooks,
+no partner docs). Integration uses the **same private HTTP endpoints** the mobile
+app calls — reverse-engineered and wrapped by community libraries.
+
+Primary library: **bring-api** (Python, PyPI, MIT)
+  https://github.com/miaucl/bring-api
+  https://pypi.org/project/bring-api/
+  Also powers Home Assistant's official Bring! integration.
+
+Auth flow:
+  1. Create aiohttp ClientSession + Bring(session, email, password)
+  2. await bring.login() — obtains session/token (same credentials as the app)
+  3. Token refresh handled by the library on expiry
+
+Core operations:
+  load_lists()           → all lists on the account; each has listUuid + name
+  get_list(listUuid)     → open items on one list
+  save_item(uuid, name, spec?)  → legacy add (name + optional spec/note)
+  complete_item(uuid, name)     → mark bought
+  remove_item(uuid, name)       → delete from list
+
+Modern batch API (what the current app uses):
+  batch_update_list(listUuid, item, operation)
+    operation = ADD | COMPLETE | REMOVE
+
+  Each item is a dict:
+    itemId  — display name (e.g. "Milk", "Milch")     [required]
+    spec    — subtitle/note (e.g. "low fat", "2")     [optional]
+    uuid    — stable item id on the list              [optional on add]
+
+  Rules that matter for Domus:
+  - ADD with same itemId updates spec on existing line unless uuid differs
+  - Quantities map to spec ("2" or "2×") not a separate number field
+  - COMPLETE/REMOVE need itemId + uuid (or itemId + spec as fallback)
+  - Renaming itemId on an existing uuid is possible but breaks app refresh UX
+  - No server push to Domus — clients poll (Home Assistant: ~90s)
+
+Minimal async example (from bring-api docs):
+
+  async with aiohttp.ClientSession() as session:
+      bring = Bring(session, "EMAIL", "PASSWORD")
+      await bring.login()
+      lists = (await bring.load_lists())["lists"]
+      list_uuid = lists[0]["listUuid"]
+      await bring.save_item(list_uuid, "Milk", "2")
+      items = await bring.get_list(list_uuid)
+      await bring.complete_item(list_uuid, "Milk")
+
+Caveats:
+  - Unofficial — Bring can change endpoints; library maintainers adapt
+  - Consumer ToS grey area for automation (fine for personal bot, risky as product)
+  - Two sources of truth unless sync strategy is chosen deliberately
+  - Domus quantity column ≠ Bring spec field (mapping is approximate)
+
+
+ARCHITECTURE OPINION (assistant — Aug 2026)
+-------------------------------------------
+Do not rebuild Bring! inside Domus. Do not rush a native "Domus app" until
+Telegram workflows are stable.
+
+Credible growth path:
+  Phase A — Telegram bot (now)
+  Phase B — optional Bring! sync bridge for shopping (highest ROI next step)
+  Phase C — read-only web/PWA dashboard for briefings (optional)
+  Phase D — native app only if Telegram + Bring leave a real gap
+
+Recommended first sync design: **Option A — write-only mirror**
+  Domus shopping add/complete/remove → push to Bring
+  Manual edits in Bring while shopping are OK; Domus SQLite stays primary
+  Telegram reply never fails if Bring is down (log error, retry later)
+
+
+SYNC OPTIONS (when/if we implement)
+------------------------------------
+  A. Write-only mirror — Domus master, Bring display (recommended first)
+  B. Bring master — Domus reads Bring for shopping; SQLite cache only
+  C. Two-way sync — uuid mapping + conflict resolution (overkill for 2 users)
+
+
+FEATURE MAPPING (Domus → Bring!)
+---------------------------------
+  add 2 milk              → save_item / batch ADD, spec = "2"
+  duplicate merge         → Bring loosely dedupes by itemId
+  export list             → less needed if Bring is the UI
+  clear shopping list     → batch REMOVE or list clear if exposed
+  check off / bought      → complete_item / batch COMPLETE
+  meal plan → ingredients → big win: auto-push missing items
+  admin/personal todos    → Domus only, never Bring
+  daily briefing preview  → poll Bring or use last sync cache
+
+
+OPEN QUESTIONS (Sebastian decides later)
+----------------------------------------
+  [ ] Is Bring! the canonical shopping UI if we sync?
+  [ ] Shared Bring account vs two accounts on one list?
+  [ ] Bring credentials in .env on Pi (gitignored) — acceptable?
+  [ ] Accept unofficial API breakage 1–2×/year?
+  [ ] SQLite shopping table: stay primary, or cache-only?
+  [ ] What would a "Domus app" do that Telegram + Bring cannot?
+
+Prototype sketch (when ready):
+  BRING_ENABLED=0/1, BRING_EMAIL, BRING_PASSWORD, BRING_LIST_NAME in .env
+  domus/bring_sync.py — fire-and-forget after shopping intents
+
+
+REFERENCES
+----------
+  app_discussion.txt (full discussion thread)
+  bring-api: https://github.com/miaucl/bring-api
+  Home Assistant: https://www.home-assistant.io/integrations/bring/
+  Bring! product: https://www.getbring.com/
+
+
+================================================================================
 HUMAN OPEN TOPICS (for Sebastian to decide later)
 ================================================================================
 Things the bot can build once you have a preference — no rush:
@@ -444,6 +604,11 @@ Things the bot can build once you have a preference — no rush:
     - Voice without wake word ("Domus" in text) — require wake word in audio?
     - Should voice notes default to /private (no cloud LLM on transcript)?
     - Telegram sends OGG/opus — confirm pipeline before building
+
+  Bring! sync & Domus app (#app-discussion)
+    - See section "BRING! APP & DOMUS HOUSEHOLD APP" above
+    - Full thread: app_discussion.txt
+    - Decision deferred — no implementation until household agrees on sync model
 
 
 ###planned
@@ -547,6 +712,7 @@ MVP gaps (partially done):
   [ ] Breakfast/lunch in weekly plan (dinners only)
   [ ] Short-term relative reminders ("in 30 minutes") — see planned #5
   [x] Shopping quantities and duplicate merge
+  [ ] Bring! shopping list sync (optional) — see BRING! APP section, app_discussion.txt
   [ ] Per-user assignment and completion tracking — see planned (person-context)
   [ ] Location tag for two apartments — see planned (person-context)
   [ ] "What's missing" without a named meal when no plan exists (falls back
@@ -573,7 +739,8 @@ Privacy & LLM usage:
   [x] Rules-first routing, then OpenRouter when rules fail (DECIDED)
   [ ] Redaction layer — configurable patterns in .env (DECIDED, long term)
   [ ] OpenRouter JSON repair via second LLM call (TBD — see priority backlog #4)
-  [ ] Conversation "brain" / multi-turn memory in SQLite (DECIDED — design later)
+  [x] Short-term chat context (last todo) for corrections and edits (wave 2)
+  [ ] Long-term conversation "brain" / multi-turn memory in SQLite (Phase 2)
 
 Infrastructure & polish:
   [ ] Automated SQLite backups — see planned #13
@@ -581,12 +748,12 @@ Infrastructure & polish:
   [x] Automated intent parsing tests from log-derived fixtures (DECIDED — #10)
   [ ] OpenRouter JSON parsing still flaky on messy input (fallback rules help)
   [ ] Old unused tables: meals (legacy schema), expenses (empty)
-  [ ] Natural-language task edits — no technical syntax required (DECIDED — #6)
+  [x] Natural-language task edits — rename, recategorize, context-aware due dates (wave 2)
   [ ] Undo last action — see planned #8
   [ ] Quiet hours for notifications — see planned #6
   [x] Export list to text/CSV
   [ ] Voice message transcription — DEFERRED (see priority backlog #9)
-  [ ] Per-user profiles — who said what, stored preferences (DECIDED — #7)
+  [x] Per-user profiles — telegram id, diet, apartment, allergies, dislikes (wave 2)
   [x] Duplicate merge on shopping adds with quantity bump
 
 Cost & ops (from dev brief, not yet tracked in-app):
@@ -598,6 +765,7 @@ QUICK REFERENCE — ALL INTENTS
 ------------------------------
 add_todo, complete_todo, remove_todo, update_todo, list_todos,
 export_list, clear_shopping_list,
+update_profile, show_profile,
 suggest_meal, log_meal, plan_meal, plan_week, show_meal_plan,
 missing_ingredients,
 add_recurring_reminder, list_reminders, remove_reminder,
@@ -605,5 +773,6 @@ daily_briefing,
 help, greeting, thanks
 
 
-Last updated: 25 August 2026 (shopping list hygiene: quantities, export, clear)
+Last updated: 25 August 2026 (wave 2: profiles, context brain, NL task edits)
 Branch: cursor/todo-list-openrouter-sqlite
+Related: app_discussion.txt, log_discussion.md

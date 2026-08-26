@@ -118,9 +118,25 @@ def format_meal_suggestions(
     return "\n".join(lines)
 
 
-def handle_suggest_meal(text: str, db_path: Path, meal_type: str | None = None) -> str:
+def handle_suggest_meal(
+    text: str,
+    db_path: Path,
+    meal_type: str | None = None,
+    *,
+    profiles: list | None = None,
+) -> str:
     resolved_type = meal_type or infer_meal_type(text) or "dinner"
-    foods = food_db.suggest_foods(db_path, meal_type=resolved_type, count=3)
+    foods = food_db.suggest_foods(
+        db_path,
+        meal_type=resolved_type,
+        count=3,
+        profiles=profiles,
+    )
+    if not foods and profiles:
+        return (
+            f"I couldn't find {resolved_type} ideas that fit everyone's preferences. "
+            "Try updating profiles or broadening diet settings."
+        )
     return format_meal_suggestions(foods, resolved_type, _shopping_items(db_path))
 
 
@@ -215,7 +231,13 @@ def handle_show_meal_plan(db_path: Path, today: date | None = None) -> str:
     return "\n".join(lines)
 
 
-def handle_plan_week(db_path: Path, created_by: str, today: date | None = None) -> str:
+def handle_plan_week(
+    db_path: Path,
+    created_by: str,
+    today: date | None = None,
+    *,
+    profiles: list | None = None,
+) -> str:
     today = today or date.today()
     end = _week_end(today)
     food_db.clear_meal_plan_range(db_path, today.isoformat(), end.isoformat())
@@ -230,6 +252,7 @@ def handle_plan_week(db_path: Path, created_by: str, today: date | None = None) 
             meal_type="dinner",
             count=1,
             exclude_ids=used_food_ids,
+            profiles=profiles,
         )
         if not suggestions:
             break
