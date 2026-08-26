@@ -13,7 +13,7 @@
           <span class="brand-mark">◈</span>
           <div>
             <h1 id="page-title">Home</h1>
-            <p class="tagline">Your household assistant</p>
+            <p class="tagline">Domus - Your household assistant</p>
           </div>
         </div>
         <div class="topbar-right">
@@ -67,6 +67,15 @@
           <p class="section-hint">Tap “Add missing” to send a recipe’s missing ingredients to your shopping list.</p>
           <div class="recipes" id="recipes"></div>
         </section>
+
+        <!-- KITCHEN -->
+        <section class="view" id="view-kitchen" data-title="Kitchen">
+          <div class="wip">
+            <div class="wip-icon">🍳</div>
+            <h2>Kitchen</h2>
+            <p>Work in progress</p>
+          </div>
+        </section>
       </main>
 
       <!-- Liquid-glass bottom navigation -->
@@ -94,6 +103,12 @@
             <path d="M7 4a3 3 0 0 0-1 5.8V19a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V9.8A3 3 0 0 0 17 4a3 3 0 0 0-5-1 3 3 0 0 0-5 1Z" /><path d="M6.5 16h11" />
           </svg>
           <span>Recipes</span>
+        </button>
+        <button class="tab" data-view="kitchen" aria-label="Kitchen">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="4" y="4" width="16" height="16" rx="2" /><circle cx="9" cy="9" r="1.8" /><circle cx="15" cy="9" r="1.8" /><circle cx="9" cy="15" r="1.8" /><circle cx="15" cy="15" r="1.8" />
+          </svg>
+          <span>Kitchen</span>
         </button>
       </nav>
     </div>
