@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Domus</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark">◈</span>
+          <div>
+            <h1>Domus</h1>
+            <p class="tagline">Your household assistant</p>
+          </div>
+        </div>
+        <span class="pill" id="connection">connecting…</span>
+      </header>
+
+      <main class="panes">
+        <!-- Chat pane -->
+        <section class="pane chat-pane">
+          <div class="pane-head">
+            <h2>Chat</h2>
+            <span class="hint">Just type — “Domus,” is optional</span>
+          </div>
+          <div class="messages" id="messages"></div>
+          <form class="composer" id="composer" autocomplete="off">
+            <input
+              id="input"
+              type="text"
+              placeholder="Domus, add milk and eggs to the list"
+              aria-label="Message Domus"
+            />
+            <button type="submit" aria-label="Send">Send</button>
+          </form>
+        </section>
+
+        <!-- Shopping list pane -->
+        <section class="pane list-pane">
+          <div class="pane-head">
+            <h2>Shopping list</h2>
+            <button class="ghost" id="refresh" title="Refresh">⟳</button>
+          </div>
+          <div class="list" id="shopping"></div>
+
+          <div class="pane-head sub">
+            <h2>Other tasks</h2>
+          </div>
+          <div class="tasks" id="tasks"></div>
+        </section>
+      </main>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

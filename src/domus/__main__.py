@@ -1,3 +1,3 @@
-from domus.bot import main
+from domus.telegram_bot.bot import main
 
 main()

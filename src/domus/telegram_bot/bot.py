@@ -10,10 +10,13 @@ from domus.config import get_settings
 from domus.conversation_log import ConversationLog
 from domus.db import init_db, subscribe_chat
 from domus.food_db import init_food_tables
-from domus.lifecycle import notify_subscribed_chats
 from domus.private_mode import apply_private_mode
 from domus.router import route_message
-from domus.scheduler import start_morning_briefing_scheduler, start_reminder_scheduler
+from domus.telegram_bot.lifecycle import notify_subscribed_chats
+from domus.telegram_bot.scheduler import (
+    start_morning_briefing_scheduler,
+    start_reminder_scheduler,
+)
 
 logger = logging.getLogger(__name__)
 

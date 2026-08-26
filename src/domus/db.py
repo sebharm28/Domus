@@ -323,6 +323,20 @@ def complete_todo(db_path: Path, item_text: str) -> Todo | None:
     return _row_to_todo(row)
 
 
+def set_todo_done(db_path: Path, todo_id: int, done: bool = True) -> Todo | None:
+    """Mark a todo done/undone by id (used by direct UI check-off toggles)."""
+    with connect(db_path) as conn:
+        row = conn.execute("SELECT * FROM todos WHERE id = ?", (todo_id,)).fetchone()
+        if row is None:
+            return None
+        conn.execute(
+            "UPDATE todos SET done = ? WHERE id = ?",
+            (1 if done else 0, todo_id),
+        )
+        updated = conn.execute("SELECT * FROM todos WHERE id = ?", (todo_id,)).fetchone()
+    return _row_to_todo(updated)
+
+
 def remove_todo(db_path: Path, item_text: str) -> Todo | None:
     with connect(db_path) as conn:
         match = _find_open_todo(conn, item_text)
