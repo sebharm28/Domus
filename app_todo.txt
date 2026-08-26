@@ -1,0 +1,63 @@
+DOMUS — APP TODO
+================
+A shared, living checklist for Domus (Telegram bot + future desktop/mobile apps).
+Format: [ ] = todo, [~] = in progress, [x] = done. Add a date + note when you
+close something. Keep this file plain text so it's easy to edit from anywhere.
+
+Last updated: 2026-08-26
+
+
+DONE
+----
+[x] Shared shopping list (add / remove / check off, quantity merging)
+[x] Natural-language intent parsing with rules engine + OpenRouter fallback
+[x] Recurring reminders (e.g. every Tuesday) and relative reminders (in 30 min)
+[x] Daily briefing + weekly meal planning + missing-ingredient checks
+[x] User profiles (diet, apartment, allergies, dislikes)
+[x] Private mode (local-rules only, skips OpenRouter)
+[x] Cloud Agent dev environment (.cursor/environment.json + install script)   # PR #1
+[x] Split Telegram adapter (domus.telegram_bot) from core brain (domus.core)   # PR #2
+[x] UI scaffold: stdlib HTTP backend + web chat + Bring!-style shopping list   # PR #2
+[x] Dark mode for the web UI (toggle + system-preference aware)                # 2026-08-26
+
+
+IN PROGRESS
+-----------
+[~] Prototype UI in ui/ (web client is the first frontend over domus.core)
+
+
+NEXT / SHORT TERM
+-----------------
+[ ] Surface recurring reminders in the UI (currently only confirmed in chat)
+[ ] Show checked-off history / "undo" for a tapped-off item in the UI
+[ ] Let the UI edit item quantity directly (+/- on a tile), not only via chat
+[ ] Category filter / tabs in the UI (shopping vs household vs admin ...)
+[ ] Persist the display name / multiple household members in the UI
+
+
+FUTURE / BIGGER
+---------------
+[ ] macOS desktop app — wrap ui/web in Tauri (preferred) or Electron
+[ ] Android/iOS app — React Native (Expo) or Flutter over the same HTTP API
+[ ] Auth + multi-household support (today the UI uses a single local household)
+[ ] Real-time updates (websocket/SSE) so all clients refresh live
+[ ] Move off Telegram entirely once the apps are ready (keep bot as one adapter)
+
+
+KNOWN ISSUES / TECH DEBT
+------------------------
+[ ] NLP: "add X and Y" is parsed as ONE item; "we need X and Y" splits into two.
+    Unify the add-item splitting so both phrasings behave the same.
+[ ] Fuzzy shopping match is substring-based, so "add 2 milk" can absorb a
+    "milk and butter" line. Tighten matching to whole item names.
+[ ] ui/server.py runs route_message via asyncio.run() per request — fine for a
+    prototype, revisit if it becomes a real backend.
+
+
+NOTES
+-----
+- Core brain: src/domus/core.py  (frontend-neutral; no messaging platform here)
+- Telegram adapter: src/domus/telegram_bot/
+- UI prototype: ui/  (see ui/README.md)
+- Run the bot:  PYTHONPATH=src python -m domus
+- Run the UI:   PYTHONPATH=src python ui/server.py   ->  http://127.0.0.1:8765

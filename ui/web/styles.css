@@ -1,5 +1,6 @@
 :root {
   --bg: #f4f1ec;
+  --bg-glow: #ffffff;
   --surface: #ffffff;
   --surface-2: #faf8f4;
   --ink: #23201c;
@@ -11,6 +12,40 @@
   --line: #e7e1d8;
   --shadow: 0 10px 30px rgba(35, 32, 28, 0.08);
   --radius: 18px;
+}
+
+/* Dark theme — applied when the user toggles it on, or by system preference
+   unless the user has explicitly chosen light. */
+:root[data-theme="dark"] {
+  --bg: #17150f;
+  --bg-glow: #201d15;
+  --surface: #211e17;
+  --surface-2: #1a1712;
+  --ink: #f0ebe1;
+  --ink-soft: #a89f8f;
+  --accent: #ff7043;
+  --accent-soft: #3a241b;
+  --domus: #58c2b8;
+  --domus-soft: #1e332f;
+  --line: #35302690;
+  --shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #17150f;
+    --bg-glow: #201d15;
+    --surface: #211e17;
+    --surface-2: #1a1712;
+    --ink: #f0ebe1;
+    --ink-soft: #a89f8f;
+    --accent: #ff7043;
+    --accent-soft: #3a241b;
+    --domus: #58c2b8;
+    --domus-soft: #1e332f;
+    --line: #35302690;
+    --shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  }
 }
 
 * {
@@ -26,8 +61,49 @@ body {
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto,
     Helvetica, Arial, sans-serif;
-  background: radial-gradient(circle at 20% -10%, #fff 0, var(--bg) 45%);
+  background: radial-gradient(circle at 20% -10%, var(--bg-glow) 0, var(--bg) 45%);
   color: var(--ink);
+  transition: background 0.3s ease, color 0.3s ease;
+}
+
+.pane,
+.tile,
+.task-row,
+.composer,
+.composer input,
+.pill {
+  transition: background 0.3s ease, color 0.3s ease, border-color 0.3s ease,
+    box-shadow 0.3s ease;
+}
+
+/* Theme toggle */
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.theme-toggle {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 18px;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  box-shadow: var(--shadow);
+  transition: transform 0.08s ease, background 0.3s ease, border-color 0.15s ease;
+}
+
+.theme-toggle:hover {
+  border-color: var(--accent);
+}
+
+.theme-toggle:active {
+  transform: scale(0.94);
 }
 
 .app {

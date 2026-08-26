@@ -5,6 +5,45 @@ const shoppingEl = document.getElementById("shopping");
 const tasksEl = document.getElementById("tasks");
 const refreshBtn = document.getElementById("refresh");
 const connectionEl = document.getElementById("connection");
+const themeToggle = document.getElementById("theme-toggle");
+const themeIcon = themeToggle.querySelector(".theme-icon");
+
+// --- Dark mode -------------------------------------------------------------
+// Priority: explicit user choice (localStorage) > system preference.
+function currentTheme() {
+  const saved = localStorage.getItem("domus-theme");
+  if (saved === "dark" || saved === "light") return saved;
+  return window.matchMedia("(prefers-color-scheme: dark)").matches
+    ? "dark"
+    : "light";
+}
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  themeIcon.textContent = theme === "dark" ? "☀️" : "🌙";
+  themeToggle.title =
+    theme === "dark" ? "Switch to light mode" : "Switch to dark mode";
+}
+
+applyTheme(currentTheme());
+
+themeToggle.addEventListener("click", () => {
+  const next =
+    document.documentElement.getAttribute("data-theme") === "dark"
+      ? "light"
+      : "dark";
+  localStorage.setItem("domus-theme", next);
+  applyTheme(next);
+});
+
+// Follow the OS theme live, but only while the user hasn't picked one.
+window
+  .matchMedia("(prefers-color-scheme: dark)")
+  .addEventListener("change", (e) => {
+    if (!localStorage.getItem("domus-theme")) {
+      applyTheme(e.matches ? "dark" : "light");
+    }
+  });
 
 // A small emoji lookup so the Bring!-style tiles feel friendly. Falls back to a
 // generic bag for anything unknown.
