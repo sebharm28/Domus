@@ -36,6 +36,7 @@ def parse_due_date(text: str, today: date | None = None) -> tuple[str, str | Non
         (r"\bon\s+(\d{4}-\d{2}-\d{2})\b", lambda m: date.fromisoformat(m.group(1))),
         (r"\bby\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", lambda m: _next_weekday(WEEKDAYS[m.group(1).lower()], today)),
         (r"\bon\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", lambda m: _next_weekday(WEEKDAYS[m.group(1).lower()], today)),
+        (r"\b(?:on\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s*$", lambda m: _next_weekday(WEEKDAYS[m.group(1).lower()], today)),
         (r"\btomorrow\b", lambda _m: today + timedelta(days=1)),
         (r"\btoday\b", lambda _m: today),
         (
@@ -74,6 +75,12 @@ def parse_apartment_hint(text: str) -> tuple[str, str | None]:
         text,
         flags=re.IGNORECASE,
     )
+    if not match:
+        match = re.search(
+            r"\bapartment\s+([a-z0-9]+)\b",
+            text,
+            flags=re.IGNORECASE,
+        )
     if not match:
         return text, None
     apartment = match.group(1).lower()

@@ -20,6 +20,7 @@ def _test_settings(db_path: Path) -> Settings:
         openrouter_model="test-model",
         database_path=db_path,
         briefing_hour=8,
+        evening_briefing_hour=20,
     )
 
 

@@ -6,6 +6,19 @@ from domus import db
 
 def parse_relative_reminder_phrase(text: str) -> tuple[str, int] | None:
     normalized = text.strip().lower().rstrip(".!?")
+
+    to_first = re.search(
+        r"^remind(?: us| me)? to (.+?) in (\d+)\s*(minutes?|mins?|hours?|hrs?)\s*$",
+        normalized,
+    )
+    if to_first:
+        task = to_first.group(1).strip(" .") or "Reminder"
+        amount = int(to_first.group(2))
+        unit = to_first.group(3)
+        minutes = amount * 60 if unit.startswith("hour") or unit.startswith("hr") else amount
+        if minutes > 0:
+            return task, minutes
+
     match = re.search(
         r"^remind(?: us| me)?(?: to)? in (\d+)\s*"
         r"(minutes?|mins?|hours?|hrs?)"

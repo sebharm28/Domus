@@ -9,7 +9,7 @@ from domus.shopping import (
     parse_item_quantity,
 )
 from domus.briefing import handle_daily_briefing
-from domus.context import record_intent_context, resolve_context_todo_id
+from domus.context import record_intent_context, resolve_action_target, resolve_context_todo_id, CONTEXT_PRONOUNS, is_context_pronoun
 from domus import profiles as profile_handlers
 from domus.meals import (
     handle_log_meal,
@@ -21,10 +21,19 @@ from domus.meals import (
 )
 from domus.reminders import (
     handle_add_recurring_reminder,
+    handle_cancel_timer,
     handle_list_reminders,
     handle_remove_reminder,
 )
 from domus.relative_reminders import handle_add_relative_reminder
+from domus.snooze import handle_snooze_reminder
+from domus.undo import (
+    handle_undo,
+    record_add,
+    record_clear,
+    record_complete,
+    record_remove,
+)
 
 
 def format_todo_list(todos: list[db.Todo]) -> str:
@@ -49,7 +58,8 @@ def format_todo_list(todos: list[db.Todo]) -> str:
 def _format_added(todo: db.Todo) -> str:
     due = format_due_date(todo.due_date)
     label = format_shopping_display(todo) if todo.category == "shopping" else todo.text
-    return f'Added "{label}" ({todo.category}, due: {due}).'
+    apt = f" [{todo.apartment}]" if todo.apartment else ""
+    return f'Added "{label}"{apt} ({todo.category}, due: {due}).'
 
 
 def _add_or_merge_todo(
@@ -61,13 +71,18 @@ def _add_or_merge_todo(
     category: str,
     created_by_user_id: int | None = None,
     apartment: str | None = None,
+    chat_id: int | None = None,
 ) -> tuple[str, db.Todo | None]:
     item_name, quantity = parse_item_quantity(item)
     add_qty = quantity if quantity is not None else 1
     if category == "shopping":
+        due_date = None
+    if category == "shopping":
         existing = db.find_open_shopping_match(db_path, item_name)
         if existing:
-            new_qty = effective_quantity(existing) + add_qty
+            previous_text = existing.text
+            previous_quantity = effective_quantity(existing)
+            new_qty = previous_quantity + add_qty
             updated = db.update_todo(
                 db_path,
                 existing.id,
@@ -75,6 +90,15 @@ def _add_or_merge_todo(
                 quantity=new_qty,
             )
             label = format_shopping_display(updated)
+            if chat_id is not None:
+                record_add(
+                    db_path,
+                    chat_id,
+                    updated,
+                    merged=True,
+                    previous_text=previous_text,
+                    previous_quantity=previous_quantity,
+                )
             return f'Updated to {label} on the shopping list.', updated
 
     todo = db.add_todo(
@@ -87,6 +111,8 @@ def _add_or_merge_todo(
         created_by_user_id=created_by_user_id,
         apartment=apartment,
     )
+    if chat_id is not None:
+        record_add(db_path, chat_id, todo)
     return _format_added(todo), todo
 
 
@@ -129,12 +155,26 @@ def format_export_list(
     return "\n".join(lines)
 
 
-def handle_clear_shopping_list(db_path: Path) -> str:
+def handle_clear_shopping_list(db_path: Path, chat_id: int | None = None) -> str:
+    todos = db.list_open_todos(db_path, category="shopping")
     count = db.clear_shopping_list(db_path)
     if count == 0:
         return "The shopping list is already empty."
+    if chat_id is not None and todos:
+        record_clear(db_path, chat_id, "clear_shopping_list", todos)
     noun = "item" if count == 1 else "items"
     return f"Cleared {count} {noun} from the shopping list."
+
+
+def handle_clear_todos(db_path: Path, chat_id: int | None = None) -> str:
+    todos = db.list_open_todos(db_path)
+    count = db.clear_all_todos(db_path)
+    if count == 0:
+        return "The list is already empty."
+    if chat_id is not None and todos:
+        record_clear(db_path, chat_id, "clear_todos", todos)
+    noun = "item" if count == 1 else "items"
+    return f"Cleared {count} open {noun} from the list."
 
 
 def handle_intents(
@@ -173,7 +213,11 @@ def handle_intents(
         "• show me the shopping list\n"
         "• export the list\n"
         "• clear the shopping list\n"
+        "• empty the todo list\n"
         "• remove milk from the list\n"
+        "• undo\n"
+        "• cancel the reminder\n"
+        "• snooze pay rent until tomorrow\n"
         "• what should I eat for dinner?\n"
         "• let's make curry with rice tonight\n"
         "• plan meals for this week\n"
@@ -206,7 +250,11 @@ def handle_intent(
             "• show me the shopping list\n"
             "• export the list\n"
             "• clear the shopping list\n"
+            "• empty the todo list\n"
             "• remove milk from the list\n"
+            "• cancel the reminder\n"
+            "• snooze that until tomorrow\n"
+            "• undo\n"
             "• check off milk\n"
             "• what should I eat for dinner?\n"
             "• let's make curry with rice tonight\n"
@@ -240,10 +288,29 @@ def handle_intent(
         )
 
     if intent.name == "clear_shopping_list":
-        return handle_clear_shopping_list(db_path)
+        return handle_clear_shopping_list(db_path, chat_id=chat_id)
+
+    if intent.name == "clear_todos":
+        return handle_clear_todos(db_path, chat_id=chat_id)
 
     if intent.name == "daily_briefing":
         return handle_daily_briefing(db_path)
+
+    if intent.name == "cancel_timer":
+        return handle_cancel_timer(db_path, chat_id, text_hint=intent.item)
+
+    if intent.name == "undo":
+        return handle_undo(db_path, chat_id)
+
+    if intent.name == "snooze_reminder":
+        return handle_snooze_reminder(
+            intent.item or "",
+            db_path,
+            chat_id=chat_id,
+            item_hint=intent.item,
+            due_date=intent.due_date,
+            delay_minutes=intent.delay_minutes,
+        )
 
     if intent.name == "suggest_meal":
         profiles = db.list_user_profiles(db_path)
@@ -279,7 +346,7 @@ def handle_intent(
     if intent.name == "add_relative_reminder":
         if chat_id is None:
             return "I need a group chat to schedule a timed reminder."
-        return handle_add_relative_reminder(
+        reply = handle_add_relative_reminder(
             intent.item or "",
             db_path,
             created_by,
@@ -287,9 +354,12 @@ def handle_intent(
             task=intent.item,
             delay_minutes=intent.delay_minutes,
         )
+        if chat_id is not None:
+            record_intent_context(db_path, chat_id, intent, todo_id=None)
+        return reply
 
     if intent.name == "list_reminders":
-        return handle_list_reminders(db_path)
+        return handle_list_reminders(db_path, chat_id=chat_id)
 
     if intent.name == "remove_reminder":
         return handle_remove_reminder(db_path, intent.item)
@@ -308,35 +378,46 @@ def handle_intent(
             category=intent.category or "general",
             created_by_user_id=telegram_user_id,
             apartment=intent.apartment or _default_apartment(db_path, telegram_user_id),
+            chat_id=chat_id,
         )
         if chat_id is not None and todo is not None:
             record_intent_context(db_path, chat_id, intent, todo_id=todo.id)
         return reply
 
     if intent.name == "complete_todo":
-        if not intent.item:
-            return "Which item should I check off?"
-        todo = db.complete_todo(db_path, intent.item)
+        todo = resolve_action_target(db_path, chat_id, intent.item)
         if todo is None:
-            return f'I could not find an open item matching "{intent.item}".'
+            if intent.item and not is_context_pronoun(intent.item):
+                return f'I could not find an open item matching "{intent.item}".'
+            return "Which item should I check off?"
+        snapshot = todo
+        todo = db.complete_todo_by_id(db_path, todo.id)
+        if todo is None:
+            return "Which item should I check off?"
         if chat_id is not None:
+            record_complete(db_path, chat_id, snapshot)
             record_intent_context(db_path, chat_id, intent, todo_id=todo.id)
         return f'Checked off "{todo.text}".'
 
     if intent.name == "remove_todo":
-        if not intent.item:
-            return "Which item should I remove?"
-        todo = db.remove_todo(db_path, intent.item)
+        todo = resolve_action_target(db_path, chat_id, intent.item)
         if todo is None:
-            return f'I could not find an open item matching "{intent.item}".'
+            if intent.item and not is_context_pronoun(intent.item):
+                return f'I could not find an open item matching "{intent.item}".'
+            return "Which item should I remove?"
+        snapshot = todo
+        todo = db.remove_todo_by_id(db_path, todo.id)
+        if todo is None:
+            return "Which item should I remove?"
         if chat_id is not None:
+            record_remove(db_path, chat_id, snapshot)
             record_intent_context(db_path, chat_id, intent, clear_todo=True)
         return f'Removed "{todo.text}" from the list.'
 
     if intent.name == "update_todo":
         return handle_update_todo(intent, db_path, chat_id)
 
-    if intent.name in ("update_profile", "show_profile"):
+    if intent.name in ("update_profile", "show_profile", "log_preference", "log_dispreference"):
         if telegram_user_id is None:
             return "I couldn't identify who sent that message."
         return profile_handlers.handle_intent(intent, db_path, telegram_user_id)
@@ -370,13 +451,7 @@ def _resolve_update_target(
         if todo is not None:
             return todo
 
-    if intent.item and intent.item.lower() not in {
-        "that",
-        "it",
-        "this",
-        "the task",
-        "the other task",
-    }:
+    if intent.item and intent.item.lower() not in CONTEXT_PRONOUNS:
         matches = db.find_open_todos_partial(db_path, intent.item)
         if matches:
             return matches[0]
@@ -411,8 +486,9 @@ def handle_update_todo(
         new_text = intent.item
 
     if new_text:
-        current = db.update_todo(db_path, current.id, text=new_text)
-        changes.append(f'renamed to "{current.text}"')
+        if new_text.strip().lower() != todo.text.strip().lower():
+            current = db.update_todo(db_path, current.id, text=new_text)
+            changes.append(f'renamed to "{current.text}"')
 
     if intent.due_date:
         current = db.update_todo(db_path, current.id, due_date=intent.due_date)

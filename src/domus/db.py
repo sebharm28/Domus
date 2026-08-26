@@ -1,7 +1,7 @@
 import re
 import sqlite3
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -37,6 +37,7 @@ class UserProfile:
     diet: str | None
     allergies: str | None
     dislikes: str | None
+    likes: str | None
     updated_at: str
 
 
@@ -57,6 +58,14 @@ class OneShotReminder:
     chat_id: int
     created_by: str
     sent: bool
+
+
+@dataclass(frozen=True)
+class ChatLastAction:
+    chat_id: int
+    action: str
+    payload: str
+    updated_at: str
 
 
 def connect(db_path: Path) -> sqlite3.Connection:
@@ -104,6 +113,7 @@ def _migrate_wave2(conn: sqlite3.Connection) -> None:
             diet TEXT,
             allergies TEXT,
             dislikes TEXT,
+            likes TEXT,
             updated_at TEXT NOT NULL
         );
 
@@ -116,6 +126,9 @@ def _migrate_wave2(conn: sqlite3.Connection) -> None:
         );
         """
     )
+    user_columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
+    if "likes" not in user_columns:
+        conn.execute("ALTER TABLE users ADD COLUMN likes TEXT")
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(todos)")}
     if "created_by_user_id" not in columns:
         conn.execute("ALTER TABLE todos ADD COLUMN created_by_user_id INTEGER")
@@ -131,6 +144,13 @@ def _migrate_wave2(conn: sqlite3.Connection) -> None:
             chat_id INTEGER NOT NULL,
             created_by TEXT NOT NULL,
             sent INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS chat_last_action (
+            chat_id INTEGER PRIMARY KEY,
+            action TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            updated_at TEXT NOT NULL
         );
         """
     )
@@ -236,6 +256,8 @@ def add_todo(
     created_by_user_id: int | None = None,
     apartment: str | None = None,
 ) -> Todo:
+    if category == "shopping":
+        due_date = None
     now = datetime.now(timezone.utc).isoformat()
     with connect(db_path) as conn:
         cursor = conn.execute(
@@ -482,6 +504,37 @@ def clear_shopping_list(db_path: Path) -> int:
         return cursor.rowcount
 
 
+def clear_all_todos(db_path: Path) -> int:
+    with connect(db_path) as conn:
+        cursor = conn.execute("DELETE FROM todos WHERE done = 0")
+        return cursor.rowcount
+
+
+def remove_todo_by_id(db_path: Path, todo_id: int) -> Todo | None:
+    with connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT * FROM todos WHERE id = ? AND done = 0",
+            (todo_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        conn.execute("DELETE FROM todos WHERE id = ?", (todo_id,))
+    return _row_to_todo(row)
+
+
+def complete_todo_by_id(db_path: Path, todo_id: int) -> Todo | None:
+    with connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT * FROM todos WHERE id = ? AND done = 0",
+            (todo_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        conn.execute("UPDATE todos SET done = 1 WHERE id = ?", (todo_id,))
+        row = conn.execute("SELECT * FROM todos WHERE id = ?", (todo_id,)).fetchone()
+    return _row_to_todo(row)
+
+
 def _row_to_user(row: sqlite3.Row) -> UserProfile:
     return UserProfile(
         telegram_user_id=row["telegram_user_id"],
@@ -491,6 +544,7 @@ def _row_to_user(row: sqlite3.Row) -> UserProfile:
         diet=row["diet"],
         allergies=row["allergies"],
         dislikes=row["dislikes"],
+        likes=row["likes"],
         updated_at=row["updated_at"],
     )
 
@@ -545,6 +599,7 @@ def update_user_profile(
     diet: str | None = None,
     allergies: str | None = None,
     dislikes: str | None = None,
+    likes: str | None = None,
 ) -> UserProfile:
     fields: list[str] = []
     params: list[str | int] = []
@@ -553,6 +608,7 @@ def update_user_profile(
         ("diet", diet),
         ("allergies", allergies),
         ("dislikes", dislikes),
+        ("likes", likes),
     ):
         if value is not None:
             fields.append(f"{column} = ?")
@@ -575,6 +631,144 @@ def update_user_profile(
     if row is None:
         raise ValueError(f"User {telegram_user_id} not found")
     return _row_to_user(row)
+
+
+def append_user_profile_list(
+    db_path: Path,
+    telegram_user_id: int,
+    field: str,
+    value: str,
+) -> UserProfile:
+    allowed = {"allergies", "dislikes", "likes"}
+    if field not in allowed:
+        raise ValueError(f"Unsupported profile list field: {field}")
+
+    profile = get_user_profile(db_path, telegram_user_id)
+    if profile is None:
+        raise ValueError("Profile not found")
+
+    existing = getattr(profile, field) or ""
+    items = [item.strip() for item in existing.split(",") if item.strip()]
+    normalized = value.strip()
+    if normalized.lower() not in {item.lower() for item in items}:
+        items.append(normalized)
+    return update_user_profile(db_path, telegram_user_id, **{field: ", ".join(items)})
+
+
+def restore_todo_due_state(
+    db_path: Path,
+    todo_id: int,
+    *,
+    due_date: str | None,
+    reminder_sent: bool,
+) -> Todo:
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE todos SET due_date = ?, reminder_sent = ? WHERE id = ?",
+            (due_date, int(reminder_sent), todo_id),
+        )
+        row = conn.execute("SELECT * FROM todos WHERE id = ?", (todo_id,)).fetchone()
+    if row is None:
+        raise ValueError(f"Todo {todo_id} not found")
+    return _row_to_todo(row)
+
+
+def delete_todo(db_path: Path, todo_id: int) -> None:
+    with connect(db_path) as conn:
+        conn.execute("DELETE FROM todos WHERE id = ?", (todo_id,))
+
+
+def restore_todo(db_path: Path, snapshot: dict) -> Todo:
+    with connect(db_path) as conn:
+        existing = conn.execute(
+            "SELECT id FROM todos WHERE id = ?",
+            (snapshot["id"],),
+        ).fetchone()
+        if existing:
+            conn.execute(
+                """
+                UPDATE todos
+                SET done = ?, due_date = ?, category = ?, reminder_sent = ?,
+                    quantity = ?, apartment = ?, text = ?
+                WHERE id = ?
+                """,
+                (
+                    int(snapshot["done"]),
+                    snapshot["due_date"],
+                    snapshot["category"],
+                    int(snapshot["reminder_sent"]),
+                    snapshot.get("quantity"),
+                    snapshot.get("apartment"),
+                    snapshot["text"],
+                    snapshot["id"],
+                ),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO todos (
+                    id, text, created_by, done, due_date, category,
+                    reminder_sent, quantity, apartment, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    snapshot["id"],
+                    snapshot["text"],
+                    snapshot["created_by"],
+                    int(snapshot["done"]),
+                    snapshot["due_date"],
+                    snapshot["category"],
+                    int(snapshot["reminder_sent"]),
+                    snapshot.get("quantity"),
+                    snapshot.get("apartment"),
+                    snapshot["created_at"],
+                ),
+            )
+        row = conn.execute("SELECT * FROM todos WHERE id = ?", (snapshot["id"],)).fetchone()
+    return _row_to_todo(row)
+
+
+def save_last_action(
+    db_path: Path,
+    chat_id: int,
+    action: str,
+    payload: str,
+) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    with connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO chat_last_action (chat_id, action, payload, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(chat_id) DO UPDATE SET
+                action = excluded.action,
+                payload = excluded.payload,
+                updated_at = excluded.updated_at
+            """,
+            (chat_id, action, payload, now),
+        )
+
+
+def get_last_action(db_path: Path, chat_id: int) -> ChatLastAction | None:
+    with connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT * FROM chat_last_action WHERE chat_id = ?",
+            (chat_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return ChatLastAction(
+        chat_id=row["chat_id"],
+        action=row["action"],
+        payload=row["payload"],
+        updated_at=row["updated_at"],
+    )
+
+
+def clear_last_action(db_path: Path, chat_id: int) -> None:
+    with connect(db_path) as conn:
+        conn.execute("DELETE FROM chat_last_action WHERE chat_id = ?", (chat_id,))
 
 
 def _row_to_chat_context(row: sqlite3.Row) -> ChatContext:
@@ -679,6 +873,128 @@ def mark_one_shot_sent(db_path: Path, reminder_id: int) -> None:
             "UPDATE one_shot_reminders SET sent = 1 WHERE id = ?",
             (reminder_id,),
         )
+
+
+def list_pending_one_shot_reminders(
+    db_path: Path,
+    chat_id: int | None = None,
+) -> list["OneShotReminder"]:
+    now = datetime.now(timezone.utc).isoformat()
+    query = """
+        SELECT * FROM one_shot_reminders
+        WHERE sent = 0 AND fire_at > ?
+    """
+    params: list[str | int] = [now]
+    if chat_id is not None:
+        query += " AND chat_id = ?"
+        params.append(chat_id)
+    query += " ORDER BY fire_at ASC, id ASC"
+    with connect(db_path) as conn:
+        rows = conn.execute(query, params).fetchall()
+    return [_row_to_one_shot(row) for row in rows]
+
+
+def list_recent_one_shot_reminders(
+    db_path: Path,
+    chat_id: int,
+    *,
+    within_hours: int = 24,
+) -> list["OneShotReminder"]:
+    now = datetime.now(timezone.utc)
+    cutoff = (now - timedelta(hours=within_hours)).isoformat()
+    with connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM one_shot_reminders
+            WHERE chat_id = ? AND sent = 1 AND fire_at >= ?
+            ORDER BY fire_at DESC, id DESC
+            """,
+            (chat_id, cutoff),
+        ).fetchall()
+    return [_row_to_one_shot(row) for row in rows]
+
+
+def cancel_one_shot_reminder(
+    db_path: Path,
+    chat_id: int,
+    *,
+    text_hint: str | None = None,
+) -> OneShotReminder | None:
+    pending = list_pending_one_shot_reminders(db_path, chat_id=chat_id)
+    if not pending:
+        return None
+    target = pending[-1]
+    if text_hint:
+        hint = text_hint.strip().lower()
+        matched = next(
+            (reminder for reminder in pending if hint in reminder.text.lower()),
+            None,
+        )
+        if matched is not None:
+            target = matched
+    with connect(db_path) as conn:
+        conn.execute("DELETE FROM one_shot_reminders WHERE id = ?", (target.id,))
+    return target
+
+
+def update_one_shot_fire_at(
+    db_path: Path,
+    reminder_id: int,
+    fire_at: datetime,
+) -> OneShotReminder:
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE one_shot_reminders SET fire_at = ? WHERE id = ?",
+            (fire_at.isoformat(), reminder_id),
+        )
+        row = conn.execute(
+            "SELECT * FROM one_shot_reminders WHERE id = ?",
+            (reminder_id,),
+        ).fetchone()
+    if row is None:
+        raise ValueError(f"One-shot reminder {reminder_id} not found")
+    return _row_to_one_shot(row)
+
+
+def set_reminder_next_due(
+    db_path: Path,
+    reminder_id: int,
+    next_due: date,
+) -> Reminder:
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE reminders SET next_due = ? WHERE id = ?",
+            (next_due.isoformat(), reminder_id),
+        )
+        row = conn.execute("SELECT * FROM reminders WHERE id = ?", (reminder_id,)).fetchone()
+    if row is None:
+        raise ValueError(f"Reminder {reminder_id} not found")
+    return _row_to_reminder(row)
+
+
+def restore_one_shot_reminder(
+    db_path: Path,
+    snapshot: dict,
+) -> OneShotReminder:
+    with connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO one_shot_reminders (id, text, fire_at, chat_id, created_by, sent)
+            VALUES (?, ?, ?, ?, ?, 0)
+            """,
+            (
+                snapshot["id"],
+                snapshot["text"],
+                snapshot["fire_at"],
+                snapshot["chat_id"],
+                snapshot["created_by"],
+            ),
+        )
+        row = conn.execute(
+            "SELECT * FROM one_shot_reminders WHERE id = ?",
+            (snapshot["id"],),
+        ).fetchone()
+    return _row_to_one_shot(row)
 
 
 def _row_to_one_shot(row: sqlite3.Row) -> OneShotReminder:

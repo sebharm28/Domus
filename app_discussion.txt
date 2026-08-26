@@ -1,13 +1,17 @@
 DOMUS × BRING! — DISCUSSION NOTES
 ==================================
 Started: 25 August 2026
+Updated: 26 August 2026 — **DEPRECATED**
 Author: Sebastian (+ assistant notes)
 
-Context: We use Bring! as our real shopping-list UI. Domus already manages
-tasks, meals, reminders, and a SQLite shopping list via Telegram. Sebastian
-likes Bring!'s native app experience and wonders whether Domus should sync there
-instead of (or in addition to) growing its own list UI — and whether the
-side project could eventually become a broader "Domus household app."
+**Decision (26 Aug 2026): Bring! integration is deprecated.** We are building our
+own Domus UI for shopping, tasks, meals, and reminders. Telegram stays as an
+NLP / rule-testing harness only. The notes below are kept for historical reference
+(unofficial API research, architecture debate).
+
+Context (historical): We used Bring! as our real shopping-list UI. Domus manages
+tasks, meals, reminders, and a SQLite shopping list via Telegram. We considered
+syncing to Bring! instead of growing our own list UI — that path is closed.
 
 
 ================================================================================

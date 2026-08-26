@@ -29,6 +29,7 @@ class Wave2bDietTests(unittest.TestCase):
             diet="vegetarian",
             allergies=None,
             dislikes=None,
+            likes=None,
             updated_at="now",
         )
         foods = food_db.list_foods(self.db_path, meal_type="dinner")

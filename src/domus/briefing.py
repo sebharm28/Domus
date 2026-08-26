@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from domus import db, food_db
@@ -65,3 +65,44 @@ def build_daily_briefing(db_path: Path, today: date | None = None) -> str:
 
 def handle_daily_briefing(db_path: Path) -> str:
     return build_daily_briefing(db_path)
+
+
+def build_evening_briefing(db_path: Path, today: date | None = None) -> str:
+    today = today or date.today()
+    tomorrow = today + timedelta(days=1)
+    due_tomorrow = db.list_todos_due_on(db_path, tomorrow)
+    meal_entry = food_db.get_meal_plan_for_day(db_path, tomorrow.isoformat())
+    shopping = db.list_open_todos(db_path, category="shopping")
+
+    lines = [f"Evening summary — {today.strftime('%a, %d %b %Y')}", ""]
+
+    if due_tomorrow:
+        lines.append(f"Due tomorrow ({tomorrow.strftime('%a, %d %b')}):")
+        for todo in due_tomorrow:
+            lines.append(f"• {todo.text} ({todo.category})")
+        lines.append("")
+    else:
+        lines.append("Due tomorrow: nothing scheduled.")
+        lines.append("")
+
+    if meal_entry:
+        lines.append(f"Planned dinner tomorrow: {meal_entry.dish}")
+    else:
+        suggestion = food_db.suggest_foods(db_path, meal_type="dinner", count=1)
+        if suggestion:
+            food = suggestion[0]
+            lines.append(f"Dinner idea for tomorrow: {food.name}")
+        else:
+            lines.append("No meal plan for tomorrow yet.")
+    lines.append("")
+
+    if shopping:
+        preview = ", ".join(format_shopping_display(todo) for todo in shopping[:4])
+        extra = f" (+{len(shopping) - 4} more)" if len(shopping) > 4 else ""
+        lines.append(f"Shopping list ({len(shopping)}): {preview}{extra}")
+
+    return "\n".join(lines).strip()
+
+
+def handle_evening_briefing(db_path: Path) -> str:
+    return build_evening_briefing(db_path)

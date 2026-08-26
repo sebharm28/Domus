@@ -42,6 +42,11 @@ def _infer_work_category(text: str) -> str | None:
 def try_parse_natural_add(text: str) -> NaturalAdd | None:
     """Parse free-form messages like 'I have a todo until tomorrow where I have to do X'."""
     lowered = text.lower()
+    if re.search(
+        r"\b(?:clear|wipe|empty)\s+(?:the\s+)?(?:(?:shopping|todo|to-do|task)s?\s*)?list\b",
+        lowered,
+    ):
+        return None
     if not re.search(
         r"\b(todo|task|remind me|need to|have to|must|should|until|untill|by tomorrow)\b",
         lowered,
