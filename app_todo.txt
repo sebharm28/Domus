@@ -26,6 +26,9 @@ DONE
 [x] Header shows current page + "Domus - Your household assistant" tagline     # 2026-08-26
 [x] Kitchen tab added as a placeholder page ("Work in progress")               # 2026-08-26
 [x] Unified dark-pink / rosa color scheme across the whole UI (no orange/teal) # 2026-08-26
+[x] Merged latest base (telegram waves 3-5) into the UI branch                 # 2026-08-26
+[x] Recipes: ingredient amounts, tags + tag filter, author, markdown notes,    # 2026-08-26
+    clickable detail popup, and a "New recipe" form (cards kept as-is)
 
 
 IN PROGRESS
