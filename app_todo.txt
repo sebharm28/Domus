@@ -22,15 +22,22 @@ DONE
 [x] Tabbed UI with liquid-glass bottom nav (Home / Shopping / Tasks / Recipes) # 2026-08-26
 [x] Direct add + remove on Shopping and Tasks pages (no chat needed)           # 2026-08-26
 [x] Recipes overview page + "Add missing to list" per recipe                   # 2026-08-26
+[x] Chat colours: Domus = rosa, You = dark pink (light + dark themes)          # 2026-08-26
+[x] Header shows current page + "Domus - Your household assistant" tagline     # 2026-08-26
+[x] Kitchen tab added as a placeholder page ("Work in progress")               # 2026-08-26
+[x] Unified dark-pink / rosa color scheme across the whole UI (no orange/teal) # 2026-08-26
 
 
 IN PROGRESS
 -----------
 [~] Prototype UI in ui/ (web client is the first frontend over domus.core)
+[~] Kitchen page — currently a "Work in progress" placeholder; decide scope
+    (ideas: pantry/inventory, what-can-I-cook-now, appliance timers)
 
 
 NEXT / SHORT TERM
 -----------------
+[ ] Build out the Kitchen page (replace the WIP placeholder)
 [ ] Surface recurring reminders on a screen (currently only confirmed in chat)
 [ ] Show checked-off history / "undo" for a tapped-off item in the UI
 [ ] Let the UI edit item quantity directly (+/- on a tile), not only via chat
