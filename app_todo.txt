@@ -19,6 +19,9 @@ DONE
 [x] Split Telegram adapter (domus.telegram_bot) from core brain (domus.core)   # PR #2
 [x] UI scaffold: stdlib HTTP backend + web chat + Bring!-style shopping list   # PR #2
 [x] Dark mode for the web UI (toggle + system-preference aware)                # 2026-08-26
+[x] Tabbed UI with liquid-glass bottom nav (Home / Shopping / Tasks / Recipes) # 2026-08-26
+[x] Direct add + remove on Shopping and Tasks pages (no chat needed)           # 2026-08-26
+[x] Recipes overview page + "Add missing to list" per recipe                   # 2026-08-26
 
 
 IN PROGRESS
@@ -28,10 +31,10 @@ IN PROGRESS
 
 NEXT / SHORT TERM
 -----------------
-[ ] Surface recurring reminders in the UI (currently only confirmed in chat)
+[ ] Surface recurring reminders on a screen (currently only confirmed in chat)
 [ ] Show checked-off history / "undo" for a tapped-off item in the UI
 [ ] Let the UI edit item quantity directly (+/- on a tile), not only via chat
-[ ] Category filter / tabs in the UI (shopping vs household vs admin ...)
+[ ] Weekly meal-plan view on the Recipes page (uses meal_plans table)
 [ ] Persist the display name / multiple household members in the UI
 
 
