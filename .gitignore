@@ -30,4 +30,6 @@ dist/
 .vscode/
 
 # Cursor
-.cursor/
+.cursor/*
+!.cursor/environment.json
+!.cursor/install.sh
