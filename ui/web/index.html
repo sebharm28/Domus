@@ -64,7 +64,11 @@
 
         <!-- RECIPES -->
         <section class="view" id="view-recipes" data-title="Recipes">
-          <p class="section-hint">Tap “Add missing” to send a recipe’s missing ingredients to your shopping list.</p>
+          <div class="recipes-bar">
+            <div class="tag-filter" id="tag-filter"></div>
+            <button class="add-btn" id="new-recipe-btn" title="New recipe" aria-label="New recipe">+</button>
+          </div>
+          <p class="section-hint">Tap a recipe for amounts &amp; notes. “Add missing” sends its ingredients to your shopping list.</p>
           <div class="recipes" id="recipes"></div>
         </section>
 
@@ -111,6 +115,11 @@
           <span>Kitchen</span>
         </button>
       </nav>
+
+      <!-- Modal (recipe detail / new recipe) -->
+      <div class="modal-overlay" id="modal-overlay" hidden>
+        <div class="modal" id="modal" role="dialog" aria-modal="true"></div>
+      </div>
     </div>
 
     <script src="app.js"></script>

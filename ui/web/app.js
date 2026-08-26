@@ -16,8 +16,18 @@ const shoppingInput = document.getElementById("shopping-input");
 const addTaskForm = document.getElementById("add-task");
 const taskInput = document.getElementById("task-input");
 const taskCategory = document.getElementById("task-category");
+const tagFilterEl = document.getElementById("tag-filter");
+const newRecipeBtn = document.getElementById("new-recipe-btn");
+const modalOverlay = document.getElementById("modal-overlay");
+const modalEl = document.getElementById("modal");
 
-const state = { todos: [], recipes: [], recipesLoaded: false };
+const state = {
+  todos: [],
+  recipes: [],
+  tags: [],
+  activeTag: null,
+  recipesLoaded: false,
+};
 
 const EMOJI = {
   milk: "🥛", eggs: "🥚", butter: "🧈", bread: "🍞", cheese: "🧀",
@@ -113,7 +123,9 @@ async function loadRecipes() {
   try {
     const data = await api("/api/recipes");
     state.recipes = data.recipes || [];
+    state.tags = data.tags || [];
     state.recipesLoaded = true;
+    renderTagFilter();
     renderRecipes();
     renderSummary();
   } catch (e) {
@@ -189,20 +201,46 @@ function renderTasks(items) {
   }
 }
 
+function renderTagFilter() {
+  tagFilterEl.innerHTML = "";
+  const chips = ["All", ...state.tags];
+  for (const tag of chips) {
+    const chip = document.createElement("button");
+    chip.className = "tag-chip";
+    const isAll = tag === "All";
+    if ((isAll && !state.activeTag) || state.activeTag === tag) {
+      chip.classList.add("is-active");
+    }
+    chip.textContent = tag;
+    chip.addEventListener("click", () => {
+      state.activeTag = isAll ? null : tag;
+      renderTagFilter();
+      renderRecipes();
+    });
+    tagFilterEl.appendChild(chip);
+  }
+}
+
 function renderRecipes() {
   recipesEl.innerHTML = "";
-  if (state.recipes.length === 0) {
-    recipesEl.innerHTML = `<p class="empty">No recipes found.</p>`;
-    return;
-  }
   const order = { breakfast: 0, lunch: 1, dinner: 2, snack: 3 };
-  const sorted = [...state.recipes].sort(
+  let list = [...state.recipes];
+  if (state.activeTag) {
+    const t = state.activeTag.toLowerCase();
+    list = list.filter((r) => (r.tags || []).some((x) => x.toLowerCase() === t));
+  }
+  list.sort(
     (a, b) => (order[a.meal_type] ?? 9) - (order[b.meal_type] ?? 9) || a.name.localeCompare(b.name)
   );
-  for (const r of sorted) {
+  if (list.length === 0) {
+    recipesEl.innerHTML = `<p class="empty">No recipes${state.activeTag ? ` tagged “${escapeHtml(state.activeTag)}”` : ""} yet.</p>`;
+    return;
+  }
+  for (const r of list) {
     const card = document.createElement("div");
     card.className = "card";
     const prep = r.prep_time_min ? `~${r.prep_time_min} min` : "";
+    // Cards keep it simple: tag, name, prep, ingredient NAMES (no amounts).
     const chips = (r.ingredients || [])
       .map((i) => `<span class="chip">${escapeHtml(i)}</span>`)
       .join("");
@@ -213,12 +251,253 @@ function renderRecipes() {
         <span class="prep">${escapeHtml(prep)}</span>
       </div>
       <div class="chips">${chips}</div>
-      ${r.notes ? `<p class="notes">${escapeHtml(r.notes)}</p>` : ""}
       <button class="plan">Add missing to list</button>
     `;
-    card.querySelector(".plan").addEventListener("click", () => planRecipe(r.name));
+    const planBtn = card.querySelector(".plan");
+    planBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      planRecipe(r.name);
+    });
+    card.addEventListener("click", () => openRecipeDetail(r.id));
     recipesEl.appendChild(card);
   }
+}
+
+// ---- minimal, safe markdown renderer (escape first, then format) ----------
+function mdToHtml(src) {
+  if (!src || !src.trim()) return '<p class="muted">No notes yet.</p>';
+  const esc = escapeHtml(src);
+  const lines = esc.split(/\r?\n/);
+  let html = "";
+  let inList = null; // 'ul' | 'ol' | null
+  const closeList = () => {
+    if (inList) {
+      html += `</${inList}>`;
+      inList = null;
+    }
+  };
+  const inline = (s) =>
+    s
+      .replace(/`([^`]+)`/g, "<code>$1</code>")
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/\*([^*]+)\*/g, "<em>$1</em>")
+      .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    let m;
+    if ((m = line.match(/^(#{1,3})\s+(.*)$/))) {
+      closeList();
+      const level = m[1].length;
+      html += `<h${level}>${inline(m[2])}</h${level}>`;
+    } else if ((m = line.match(/^\s*[-*]\s+(.*)$/))) {
+      if (inList !== "ul") {
+        closeList();
+        html += "<ul>";
+        inList = "ul";
+      }
+      html += `<li>${inline(m[1])}</li>`;
+    } else if ((m = line.match(/^\s*\d+\.\s+(.*)$/))) {
+      if (inList !== "ol") {
+        closeList();
+        html += "<ol>";
+        inList = "ol";
+      }
+      html += `<li>${inline(m[1])}</li>`;
+    } else if (line.trim() === "") {
+      closeList();
+    } else {
+      closeList();
+      html += `<p>${inline(line)}</p>`;
+    }
+  }
+  closeList();
+  return html;
+}
+
+// ---- recipe detail modal --------------------------------------------------
+function openRecipeDetail(id) {
+  const r = state.recipes.find((x) => x.id === id);
+  if (!r) return;
+  const prep = r.prep_time_min ? `~${r.prep_time_min} min` : "";
+  const tagChips = (r.tags || [])
+    .map((t) => `<span class="chip">${escapeHtml(t)}</span>`)
+    .join("");
+  const details = (r.ingredient_details && r.ingredient_details.length
+    ? r.ingredient_details
+    : (r.ingredients || []).map((n) => ({ name: n, amount: "" }))
+  )
+    .map((d) => {
+      const amt = d.amount
+        ? `<span class="amt">${escapeHtml(d.amount)}</span>`
+        : `<span class="amt none">—</span>`;
+      return `<li><span>${escapeHtml(d.name)}</span>${amt}</li>`;
+    })
+    .join("");
+
+  modalEl.innerHTML = `
+    <div class="modal-head">
+      <h2>${escapeHtml(r.name)}</h2>
+      <button class="close" aria-label="Close">×</button>
+    </div>
+    <div class="meta-row">
+      <span class="type">${escapeHtml(r.meal_type)}</span>
+      ${prep ? `<span>${escapeHtml(prep)}</span>` : ""}
+      ${r.author ? `<span>· by ${escapeHtml(r.author)}</span>` : ""}
+    </div>
+    ${tagChips ? `<h4>Tags</h4><div class="chips">${tagChips}</div>` : ""}
+    <h4>Ingredients</h4>
+    <ul class="ing-list">${details}</ul>
+    <h4>Notes</h4>
+    <div class="md" id="note-view">${mdToHtml(r.notes)}</div>
+    <div class="modal-actions">
+      <button class="btn link" id="edit-note">Edit notes</button>
+    </div>
+  `;
+  modalEl.querySelector(".close").addEventListener("click", closeModal);
+  modalEl.querySelector("#edit-note").addEventListener("click", () => editNotes(r));
+  openModal();
+}
+
+function editNotes(r) {
+  const actions = modalEl.querySelector(".modal-actions");
+  const view = modalEl.querySelector("#note-view");
+  view.outerHTML = `<textarea class="note-editor" id="note-edit" placeholder="Write notes in markdown…"># ${r.name}\n</textarea>`;
+  const ta = modalEl.querySelector("#note-edit");
+  ta.value = r.notes || "";
+  ta.focus();
+  actions.innerHTML = `
+    <button class="btn" id="cancel-note">Cancel</button>
+    <button class="btn primary" id="save-note">Save notes</button>
+  `;
+  actions.querySelector("#cancel-note").addEventListener("click", () => openRecipeDetail(r.id));
+  actions.querySelector("#save-note").addEventListener("click", () => saveNotes(r.id, ta.value));
+}
+
+async function saveNotes(id, notes) {
+  try {
+    const data = await api("/api/recipes/update", { id, notes });
+    state.recipes = data.recipes || state.recipes;
+    state.tags = data.tags || state.tags;
+    openRecipeDetail(id); // re-render with saved markdown
+    toast("Notes saved.");
+  } catch (e) {
+    setConnected(false);
+  }
+}
+
+// ---- new recipe form ------------------------------------------------------
+function ingredientRow(name = "", amount = "") {
+  const row = document.createElement("div");
+  row.className = "ing-row";
+  row.innerHTML = `
+    <input class="ing-name" placeholder="Ingredient" value="${escapeAttr(name)}" />
+    <input class="ing-amt" placeholder="Amount (e.g. 200 g)" value="${escapeAttr(amount)}" />
+    <button type="button" class="rm" title="Remove">×</button>
+  `;
+  row.querySelector(".rm").addEventListener("click", () => row.remove());
+  return row;
+}
+
+function openNewRecipeForm() {
+  modalEl.innerHTML = `
+    <div class="modal-head">
+      <h2>New recipe</h2>
+      <button class="close" aria-label="Close">×</button>
+    </div>
+    <div class="form-grid">
+      <div class="field"><label>Name</label><input id="nr-name" placeholder="e.g. Pumpkin soup" /></div>
+      <div class="field two">
+        <div><label>Meal type</label>
+          <select id="nr-type">
+            <option value="breakfast">Breakfast</option>
+            <option value="lunch">Lunch</option>
+            <option value="dinner" selected>Dinner</option>
+            <option value="snack">Snack</option>
+          </select>
+        </div>
+        <div><label>Prep time (min)</label><input id="nr-prep" type="number" min="0" placeholder="30" /></div>
+      </div>
+      <div class="field two">
+        <div><label>Tags (comma-separated)</label><input id="nr-tags" placeholder="soup, autumn" /></div>
+        <div><label>Author</label><input id="nr-author" placeholder="You" /></div>
+      </div>
+      <div class="field">
+        <label>Ingredients &amp; amounts</label>
+        <div class="ing-rows" id="nr-ings"></div>
+        <button type="button" class="btn link" id="nr-add-ing">+ Add ingredient</button>
+      </div>
+      <div class="field"><label>Notes (markdown)</label><textarea id="nr-notes" class="note-editor" placeholder="# Steps&#10;- Do this&#10;- Then that"></textarea></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" id="nr-cancel">Cancel</button>
+      <button class="btn primary" id="nr-save">Create recipe</button>
+    </div>
+  `;
+  const ings = modalEl.querySelector("#nr-ings");
+  ings.appendChild(ingredientRow());
+  ings.appendChild(ingredientRow());
+  modalEl.querySelector("#nr-add-ing").addEventListener("click", () => ings.appendChild(ingredientRow()));
+  modalEl.querySelector(".close").addEventListener("click", closeModal);
+  modalEl.querySelector("#nr-cancel").addEventListener("click", closeModal);
+  modalEl.querySelector("#nr-save").addEventListener("click", submitNewRecipe);
+  openModal();
+  modalEl.querySelector("#nr-name").focus();
+}
+
+async function submitNewRecipe() {
+  const name = modalEl.querySelector("#nr-name").value.trim();
+  if (!name) {
+    toast("Please give the recipe a name.");
+    return;
+  }
+  const meal_type = modalEl.querySelector("#nr-type").value;
+  const prepRaw = modalEl.querySelector("#nr-prep").value.trim();
+  const tags = modalEl.querySelector("#nr-tags").value
+    .split(",")
+    .map((t) => t.trim())
+    .filter(Boolean);
+  const author = modalEl.querySelector("#nr-author").value.trim() || null;
+  const notes = modalEl.querySelector("#nr-notes").value;
+  const ingredients = [...modalEl.querySelectorAll(".ing-row")]
+    .map((row) => ({
+      name: row.querySelector(".ing-name").value.trim(),
+      amount: row.querySelector(".ing-amt").value.trim(),
+    }))
+    .filter((i) => i.name);
+
+  const payload = { name, meal_type, tags, author, notes, ingredients };
+  if (prepRaw) payload.prep_time_min = parseInt(prepRaw, 10);
+
+  try {
+    const data = await api("/api/recipes/add", payload);
+    if (data.error) {
+      toast(data.error);
+      return;
+    }
+    state.recipes = data.recipes || [];
+    state.tags = data.tags || [];
+    renderTagFilter();
+    renderRecipes();
+    renderSummary();
+    closeModal();
+    toast(`Added “${name}”.`);
+  } catch (e) {
+    setConnected(false);
+  }
+}
+
+// ---- modal helpers --------------------------------------------------------
+function openModal() {
+  modalOverlay.hidden = false;
+}
+
+function closeModal() {
+  modalOverlay.hidden = true;
+  modalEl.innerHTML = "";
+}
+
+function escapeAttr(str) {
+  return escapeHtml(str).replace(/`/g, "&#96;");
 }
 
 // ---- actions --------------------------------------------------------------
@@ -347,6 +626,16 @@ addTaskForm.addEventListener("submit", (e) => {
   if (!name) return;
   taskInput.value = "";
   addTodo(name, taskCategory.value);
+});
+
+newRecipeBtn.addEventListener("click", openNewRecipeForm);
+
+modalOverlay.addEventListener("click", (e) => {
+  if (e.target === modalOverlay) closeModal();
+});
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !modalOverlay.hidden) closeModal();
 });
 
 // ---- boot -----------------------------------------------------------------
