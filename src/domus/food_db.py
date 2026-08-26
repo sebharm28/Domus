@@ -1,7 +1,7 @@
 import json
 import random
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -25,6 +25,11 @@ class Food:
     ingredients: list[str]
     prep_time_min: int | None
     notes: str | None
+    # Detailed ingredients with amounts, e.g. [{"name": "flour", "amount": "200 g"}].
+    # `ingredients` stays a plain name list for the cards and the meal planner.
+    ingredient_details: list[dict] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
+    author: str | None = None
 
 
 DEFAULT_FOODS: list[tuple[str, str, list[str], int, str]] = [
@@ -80,19 +85,69 @@ def init_food_tables(db_path: Path) -> None:
             );
             """
         )
+        _migrate_foods(conn)
         count = conn.execute("SELECT COUNT(*) AS c FROM foods").fetchone()["c"]
         if count == 0:
             for name, meal_type, ingredients, prep_time, notes in DEFAULT_FOODS:
+                details = [{"name": item, "amount": ""} for item in ingredients]
                 conn.execute(
                     """
-                    INSERT INTO foods (name, meal_type, ingredients, prep_time_min, notes)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT INTO foods
+                        (name, meal_type, ingredients, prep_time_min, notes,
+                         ingredient_details, tags, author)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (name, meal_type, json.dumps(ingredients), prep_time, notes),
+                    (
+                        name,
+                        meal_type,
+                        json.dumps(ingredients),
+                        prep_time,
+                        notes,
+                        json.dumps(details),
+                        json.dumps([meal_type]),
+                        "Domus",
+                    ),
                 )
 
 
+def _migrate_foods(conn: sqlite3.Connection) -> None:
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(foods)")}
+    if "ingredient_details" not in columns:
+        conn.execute(
+            "ALTER TABLE foods ADD COLUMN ingredient_details TEXT NOT NULL DEFAULT '[]'"
+        )
+    if "tags" not in columns:
+        conn.execute("ALTER TABLE foods ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'")
+    if "author" not in columns:
+        conn.execute("ALTER TABLE foods ADD COLUMN author TEXT")
+
+    # Backfill new columns for pre-existing rows so the UI has content to show.
+    rows = conn.execute("SELECT id, meal_type, ingredients, ingredient_details, tags FROM foods").fetchall()
+    for row in rows:
+        updates: list[str] = []
+        params: list = []
+        if not json.loads(row["ingredient_details"] or "[]"):
+            names = json.loads(row["ingredients"] or "[]")
+            details = [{"name": item, "amount": ""} for item in names]
+            updates.append("ingredient_details = ?")
+            params.append(json.dumps(details))
+        if not json.loads(row["tags"] or "[]") and row["meal_type"]:
+            updates.append("tags = ?")
+            params.append(json.dumps([row["meal_type"]]))
+        if updates:
+            params.append(row["id"])
+            conn.execute(f"UPDATE foods SET {', '.join(updates)} WHERE id = ?", params)
+
+
 def _row_to_food(row: sqlite3.Row) -> Food:
+    keys = row.keys()
+    details = []
+    if "ingredient_details" in keys and row["ingredient_details"]:
+        details = json.loads(row["ingredient_details"])
+    tags = []
+    if "tags" in keys and row["tags"]:
+        tags = json.loads(row["tags"])
+    author = row["author"] if "author" in keys else None
     return Food(
         id=row["id"],
         name=row["name"],
@@ -100,6 +155,9 @@ def _row_to_food(row: sqlite3.Row) -> Food:
         ingredients=json.loads(row["ingredients"]),
         prep_time_min=row["prep_time_min"],
         notes=row["notes"],
+        ingredient_details=details,
+        tags=tags,
+        author=author,
     )
 
 
@@ -170,6 +228,114 @@ def add_custom_food(
             (cursor.lastrowid,),
         ).fetchone()
     return _row_to_food(row)
+
+
+def get_food(db_path: Path, food_id: int) -> Food | None:
+    with connect(db_path) as conn:
+        row = conn.execute("SELECT * FROM foods WHERE id = ?", (food_id,)).fetchone()
+    return _row_to_food(row) if row else None
+
+
+def _clean_tags(tags: list[str] | None) -> list[str]:
+    cleaned: list[str] = []
+    for tag in tags or []:
+        tag = str(tag).strip()
+        if tag and tag.lower() not in {t.lower() for t in cleaned}:
+            cleaned.append(tag)
+    return cleaned
+
+
+def add_recipe(
+    db_path: Path,
+    name: str,
+    *,
+    meal_type: str = "dinner",
+    ingredient_details: list[dict] | None = None,
+    tags: list[str] | None = None,
+    notes: str | None = None,
+    author: str | None = None,
+    prep_time_min: int | None = None,
+) -> Food:
+    """Create a recipe with amounts per ingredient, tags and an author."""
+    title = " ".join(word.capitalize() for word in name.strip().split())
+    if not title:
+        raise ValueError("Recipe name is required.")
+
+    details: list[dict] = []
+    names: list[str] = []
+    for item in ingredient_details or []:
+        iname = str(item.get("name", "")).strip()
+        if not iname:
+            continue
+        amount = str(item.get("amount", "") or "").strip()
+        details.append({"name": iname, "amount": amount})
+        names.append(iname)
+
+    tag_list = _clean_tags(tags)
+    if meal_type and meal_type.lower() not in {t.lower() for t in tag_list}:
+        tag_list.insert(0, meal_type)
+
+    with connect(db_path) as conn:
+        existing = conn.execute(
+            "SELECT id FROM foods WHERE lower(name) = lower(?)", (title,)
+        ).fetchone()
+        if existing is not None:
+            raise ValueError(f'A recipe called "{title}" already exists.')
+        cursor = conn.execute(
+            """
+            INSERT INTO foods
+                (name, meal_type, ingredients, prep_time_min, notes,
+                 ingredient_details, tags, author)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                title,
+                meal_type or "dinner",
+                json.dumps(names),
+                prep_time_min,
+                notes,
+                json.dumps(details),
+                json.dumps(tag_list),
+                author,
+            ),
+        )
+        row = conn.execute("SELECT * FROM foods WHERE id = ?", (cursor.lastrowid,)).fetchone()
+    return _row_to_food(row)
+
+
+def update_recipe(
+    db_path: Path,
+    food_id: int,
+    *,
+    notes: str | None = None,
+    tags: list[str] | None = None,
+) -> Food | None:
+    """Update a recipe's markdown notes and/or its tag list."""
+    fields: list[str] = []
+    params: list = []
+    if notes is not None:
+        fields.append("notes = ?")
+        params.append(notes)
+    if tags is not None:
+        fields.append("tags = ?")
+        params.append(json.dumps(_clean_tags(tags)))
+    if not fields:
+        return get_food(db_path, food_id)
+    params.append(food_id)
+    with connect(db_path) as conn:
+        conn.execute(f"UPDATE foods SET {', '.join(fields)} WHERE id = ?", params)
+        row = conn.execute("SELECT * FROM foods WHERE id = ?", (food_id,)).fetchone()
+    return _row_to_food(row) if row else None
+
+
+def list_tags(db_path: Path) -> list[str]:
+    """Distinct recipe tags (case-insensitive), for the filter UI."""
+    seen: dict[str, str] = {}
+    for food in list_foods(db_path):
+        for tag in food.tags:
+            if tag.lower() not in seen:
+                seen[tag.lower()] = tag
+    return sorted(seen.values(), key=str.lower)
 
 
 def _likes_score(food: Food, profiles: list) -> int:
