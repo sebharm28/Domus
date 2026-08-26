@@ -637,6 +637,13 @@ body {
   text-transform: capitalize;
 }
 
+/* Tag chips inside the recipe detail use the pink accent to match the theme */
+.chip.tag-pill {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent-soft);
+}
+
 .card .notes {
   font-size: 12.5px;
   color: var(--ink-soft);

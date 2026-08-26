@@ -320,7 +320,7 @@ function openRecipeDetail(id) {
   if (!r) return;
   const prep = r.prep_time_min ? `~${r.prep_time_min} min` : "";
   const tagChips = (r.tags || [])
-    .map((t) => `<span class="chip">${escapeHtml(t)}</span>`)
+    .map((t) => `<span class="chip tag-pill">${escapeHtml(t)}</span>`)
     .join("");
   const details = (r.ingredient_details && r.ingredient_details.length
     ? r.ingredient_details
@@ -418,7 +418,7 @@ function openNewRecipeForm() {
         <div><label>Prep time (min)</label><input id="nr-prep" type="number" min="0" placeholder="30" /></div>
       </div>
       <div class="field two">
-        <div><label>Tags (comma-separated)</label><input id="nr-tags" placeholder="soup, autumn" /></div>
+        <div><label>Tags (comma-separated)</label><input id="nr-tags" placeholder="e.g. soup, vegan" /></div>
         <div><label>Author</label><input id="nr-author" placeholder="You" /></div>
       </div>
       <div class="field">
