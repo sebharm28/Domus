@@ -3,6 +3,7 @@ from pathlib import Path
 from domus import db
 from domus.dates import format_due_date
 from domus.intents import Intent
+from domus.person_context import format_assignee_label, handle_who_did_what, resolve_assignee_user_id
 from domus.shopping import (
     effective_quantity,
     format_shopping_display,
@@ -12,6 +13,7 @@ from domus.briefing import handle_daily_briefing
 from domus.context import record_intent_context, resolve_action_target, resolve_context_todo_id, CONTEXT_PRONOUNS, is_context_pronoun
 from domus import profiles as profile_handlers
 from domus.meals import (
+    handle_add_recipe,
     handle_log_meal,
     handle_missing_ingredients,
     handle_plan_meal,
@@ -36,7 +38,7 @@ from domus.undo import (
 )
 
 
-def format_todo_list(todos: list[db.Todo]) -> str:
+def format_todo_list(todos: list[db.Todo], db_path: Path | None = None) -> str:
     if not todos:
         return "The list is empty."
 
@@ -51,15 +53,19 @@ def format_todo_list(todos: list[db.Todo]) -> str:
             due = format_due_date(todo.due_date)
             label = format_shopping_display(todo) if todo.category == "shopping" else todo.text
             apt = f" [{todo.apartment}]" if todo.apartment else ""
-            lines.append(f"• {label}{apt} — due: {due}")
+            assignee = format_assignee_label(db_path, todo.assigned_to_user_id) if db_path else None
+            assign = f" → {assignee}" if assignee else ""
+            lines.append(f"• {label}{apt}{assign} — due: {due}")
     return "\n".join(lines)
 
 
-def _format_added(todo: db.Todo) -> str:
+def _format_added(todo: db.Todo, db_path: Path | None = None) -> str:
     due = format_due_date(todo.due_date)
     label = format_shopping_display(todo) if todo.category == "shopping" else todo.text
     apt = f" [{todo.apartment}]" if todo.apartment else ""
-    return f'Added "{label}"{apt} ({todo.category}, due: {due}).'
+    assignee = format_assignee_label(db_path, todo.assigned_to_user_id) if db_path else None
+    assign = f", assigned to {assignee}" if assignee else ""
+    return f'Added "{label}"{apt} ({todo.category}, due: {due}{assign}).'
 
 
 def _add_or_merge_todo(
@@ -70,6 +76,7 @@ def _add_or_merge_todo(
     due_date: str | None,
     category: str,
     created_by_user_id: int | None = None,
+    assigned_to_user_id: int | None = None,
     apartment: str | None = None,
     chat_id: int | None = None,
 ) -> tuple[str, db.Todo | None]:
@@ -110,10 +117,11 @@ def _add_or_merge_todo(
         quantity=add_qty if category == "shopping" else None,
         created_by_user_id=created_by_user_id,
         apartment=apartment,
+        assigned_to_user_id=assigned_to_user_id,
     )
     if chat_id is not None:
         record_add(db_path, chat_id, todo)
-    return _format_added(todo), todo
+    return _format_added(todo, db_path), todo
 
 
 def format_export_list(
@@ -277,7 +285,7 @@ def handle_intent(
             if intent.apartment:
                 return f"No open tasks for apartment {intent.apartment}."
             return "The list is empty."
-        return format_todo_list(todos)
+        return format_todo_list(todos, db_path)
 
     if intent.name == "export_list":
         export_format = "csv" if (intent.item or "").lower() == "csv" else "text"
@@ -334,6 +342,11 @@ def handle_intent(
     if intent.name == "missing_ingredients":
         return handle_missing_ingredients(intent.item or "", db_path, meal_name=intent.item)
 
+    if intent.name == "add_recipe":
+        profile = db.get_user_profile(db_path, telegram_user_id) if telegram_user_id else None
+        author = profile.display_name if profile else created_by
+        return handle_add_recipe(intent, db_path, author=author)
+
     if intent.name == "add_recurring_reminder":
         return handle_add_recurring_reminder(
             intent.item or "",
@@ -367,9 +380,17 @@ def handle_intent(
     if intent.name == "log_meal":
         return handle_log_meal(intent.item or "", db_path, created_by)
 
+    if intent.name == "who_did_what":
+        return handle_who_did_what(db_path)
+
     if intent.name == "add_todo":
         if not intent.item:
             return "What should I add?"
+        assigned_to_user_id = resolve_assignee_user_id(
+            db_path,
+            intent.assignee,
+            current_user_id=telegram_user_id,
+        )
         reply, todo = _add_or_merge_todo(
             db_path,
             intent.item,
@@ -377,6 +398,7 @@ def handle_intent(
             due_date=intent.due_date,
             category=intent.category or "general",
             created_by_user_id=telegram_user_id,
+            assigned_to_user_id=assigned_to_user_id,
             apartment=intent.apartment or _default_apartment(db_path, telegram_user_id),
             chat_id=chat_id,
         )
@@ -391,7 +413,11 @@ def handle_intent(
                 return f'I could not find an open item matching "{intent.item}".'
             return "Which item should I check off?"
         snapshot = todo
-        todo = db.complete_todo_by_id(db_path, todo.id)
+        todo = db.complete_todo_by_id(
+            db_path,
+            todo.id,
+            completed_by_user_id=telegram_user_id,
+        )
         if todo is None:
             return "Which item should I check off?"
         if chat_id is not None:

@@ -72,12 +72,21 @@
           <div class="recipes" id="recipes"></div>
         </section>
 
-        <!-- KITCHEN -->
-        <section class="view" id="view-kitchen" data-title="Kitchen">
-          <div class="wip">
-            <div class="wip-icon">🍳</div>
-            <h2>Kitchen</h2>
-            <p>Work in progress</p>
+        <!-- HOUSEHOLD -->
+        <section class="view" id="view-household" data-title="Household">
+          <div class="household-grid">
+            <section class="panel">
+              <h2>People</h2>
+              <div id="profiles" class="profile-list"></div>
+            </section>
+            <section class="panel">
+              <h2>Who did what (7 days)</h2>
+              <div id="stats" class="stats-list"></div>
+            </section>
+            <section class="panel">
+              <h2>Settings</h2>
+              <div id="settings" class="settings-block"></div>
+            </section>
           </div>
         </section>
       </main>
@@ -108,11 +117,11 @@
           </svg>
           <span>Recipes</span>
         </button>
-        <button class="tab" data-view="kitchen" aria-label="Kitchen">
+        <button class="tab" data-view="household" aria-label="Household">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="4" y="4" width="16" height="16" rx="2" /><circle cx="9" cy="9" r="1.8" /><circle cx="15" cy="9" r="1.8" /><circle cx="9" cy="15" r="1.8" /><circle cx="15" cy="15" r="1.8" />
+            <path d="M16 21v-2a4 4 0 0 0-8 0v2" /><circle cx="12" cy="7" r="4" /><path d="M3 21h18" />
           </svg>
-          <span>Kitchen</span>
+          <span>Household</span>
         </button>
       </nav>
 

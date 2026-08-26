@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from domus import db, food_db
+from domus.memory import remember_user_fact
 
 
 def touch_user(
@@ -58,6 +59,13 @@ def handle_update_profile(intent, db_path: Path, telegram_user_id: int) -> str:
         return "What should I update on your profile?"
 
     updated = db.update_user_profile(db_path, telegram_user_id, **{field: value})
+    remember_user_fact(
+        db_path,
+        user_id=telegram_user_id,
+        key=field,
+        value=value,
+        source="profile_update",
+    )
     label = field.replace("_", " ")
     return f"Updated your {label} to {value!r}."
 
@@ -72,6 +80,13 @@ def handle_log_preference(intent, db_path: Path, telegram_user_id: int) -> str:
         return "What should I remember that you like?"
 
     db.append_user_profile_list(db_path, telegram_user_id, "likes", value)
+    remember_user_fact(
+        db_path,
+        user_id=telegram_user_id,
+        key="likes",
+        value=value,
+        source="log_preference",
+    )
     food_db.init_food_tables(db_path)
     food = food_db.add_custom_food(db_path, value)
     return (
@@ -90,6 +105,13 @@ def handle_log_dispreference(intent, db_path: Path, telegram_user_id: int) -> st
         return "What should I remember that you don't like?"
 
     db.append_user_profile_list(db_path, telegram_user_id, "dislikes", value)
+    remember_user_fact(
+        db_path,
+        user_id=telegram_user_id,
+        key="dislikes",
+        value=value,
+        source="log_dispreference",
+    )
     return f"Got it — I'll remember you don't like {value!r}."
 
 

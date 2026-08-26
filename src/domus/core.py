@@ -24,14 +24,23 @@ from domus.config import (
     DEFAULT_DB_PATH,
     DEFAULT_EVENING_BRIEFING_HOUR,
     DEFAULT_OPENROUTER_MODEL,
+    DEFAULT_QUIET_HOURS_END,
+    DEFAULT_QUIET_HOURS_START,
     Settings,
+    _parse_bool,
+    _parse_pattern_list,
     get_settings,
 )
 from domus.db import (
     Todo,
+    UserProfile,
+    CompletionStat,
     delete_todo_by_id,
+    get_user_profile,
     init_db,
+    list_completion_stats,
     list_open_todos,
+    list_user_profiles,
     set_todo_done,
 )
 from domus.food_db import (
@@ -51,6 +60,8 @@ __all__ = [
     "Settings",
     "Todo",
     "Food",
+    "UserProfile",
+    "CompletionStat",
     "get_settings",
     "build_settings",
     "init_storage",
@@ -65,6 +76,10 @@ __all__ = [
     "update_recipe",
     "get_food",
     "list_recipe_tags",
+    "list_profiles",
+    "get_profile",
+    "list_completion_stats",
+    "settings_payload",
     "route_message",
 ]
 
@@ -85,6 +100,11 @@ def build_settings(*, database_path: Path | None = None) -> Settings:
         evening_briefing_hour=int(
             os.getenv("EVENING_BRIEFING_HOUR", str(DEFAULT_EVENING_BRIEFING_HOUR))
         ),
+        quiet_hours_enabled=_parse_bool(os.getenv("QUIET_HOURS_ENABLED", "true"), default=True),
+        quiet_hours_start=int(os.getenv("QUIET_HOURS_START", str(DEFAULT_QUIET_HOURS_START))),
+        quiet_hours_end=int(os.getenv("QUIET_HOURS_END", str(DEFAULT_QUIET_HOURS_END))),
+        redaction_enabled=_parse_bool(os.getenv("REDACTION_ENABLED", "false"), default=False),
+        redaction_patterns=tuple(_parse_pattern_list(os.getenv("REDACTION_PATTERNS", ""))),
     )
 
 
@@ -135,6 +155,26 @@ def list_recipe_tags(db_path: Path) -> list[str]:
 def plan_recipe(db_path: Path, name: str, *, created_by: str = "You") -> str:
     """Plan a recipe by name, adding any missing ingredients to the list."""
     return handle_plan_meal(name, db_path, created_by, meal_name=name)
+
+
+def list_profiles(db_path: Path) -> list[UserProfile]:
+    return list_user_profiles(db_path)
+
+
+def get_profile(db_path: Path, user_id: int) -> UserProfile | None:
+    return get_user_profile(db_path, user_id)
+
+
+def settings_payload(settings: Settings) -> dict:
+    return {
+        "briefing_hour": settings.briefing_hour,
+        "evening_briefing_hour": settings.evening_briefing_hour,
+        "quiet_hours_enabled": settings.quiet_hours_enabled,
+        "quiet_hours_start": settings.quiet_hours_start,
+        "quiet_hours_end": settings.quiet_hours_end,
+        "redaction_enabled": settings.redaction_enabled,
+        "redaction_patterns": list(settings.redaction_patterns),
+    }
 
 
 async def handle_user_message(

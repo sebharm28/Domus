@@ -17,6 +17,38 @@ class Todo:
     created_at: str
     quantity: int | None = None
     apartment: str | None = None
+    created_by_user_id: int | None = None
+    assigned_to_user_id: int | None = None
+    completed_by_user_id: int | None = None
+    completed_at: str | None = None
+
+
+@dataclass(frozen=True)
+class ConversationTurn:
+    id: int
+    chat_id: int
+    user_id: int | None
+    role: str
+    text: str
+    intent_json: str | None
+    created_at: str
+
+
+@dataclass(frozen=True)
+class MemoryFact:
+    id: int
+    user_id: int | None
+    fact_key: str
+    fact_value: str
+    source: str | None
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class CompletionStat:
+    display_name: str
+    count: int
+    samples: list[str]
 
 
 @dataclass(frozen=True)
@@ -156,6 +188,40 @@ def _migrate_wave2(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_wave3(conn: sqlite3.Connection) -> None:
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(todos)")}
+    if "assigned_to_user_id" not in columns:
+        conn.execute("ALTER TABLE todos ADD COLUMN assigned_to_user_id INTEGER")
+    if "completed_by_user_id" not in columns:
+        conn.execute("ALTER TABLE todos ADD COLUMN completed_by_user_id INTEGER")
+    if "completed_at" not in columns:
+        conn.execute("ALTER TABLE todos ADD COLUMN completed_at TEXT")
+
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS conversation_turns (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER NOT NULL,
+            user_id INTEGER,
+            role TEXT NOT NULL,
+            text TEXT NOT NULL,
+            intent_json TEXT,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS memory_facts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            fact_key TEXT NOT NULL,
+            fact_value TEXT NOT NULL,
+            source TEXT,
+            updated_at TEXT NOT NULL,
+            UNIQUE(user_id, fact_key)
+        );
+        """
+    )
+
+
 def init_db(db_path: Path) -> None:
     with connect(db_path) as conn:
         conn.executescript(
@@ -206,6 +272,7 @@ def init_db(db_path: Path) -> None:
         _migrate_todos(conn)
         _migrate_reminders(conn)
         _migrate_wave2(conn)
+        _migrate_wave3(conn)
 
 
 def _row_to_todo(row: sqlite3.Row) -> Todo:
@@ -222,8 +289,12 @@ def _row_to_todo(row: sqlite3.Row) -> Todo:
         reminder_sent=bool(row["reminder_sent"]) if "reminder_sent" in row.keys() else False,
         created_at=row["created_at"],
         quantity=quantity,
-        apartment=row["apartment"] if "apartment" in row.keys() else None,
-    )
+    apartment=row["apartment"] if "apartment" in row.keys() else None,
+    created_by_user_id=row["created_by_user_id"] if "created_by_user_id" in row.keys() else None,
+    assigned_to_user_id=row["assigned_to_user_id"] if "assigned_to_user_id" in row.keys() else None,
+    completed_by_user_id=row["completed_by_user_id"] if "completed_by_user_id" in row.keys() else None,
+    completed_at=row["completed_at"] if "completed_at" in row.keys() else None,
+)
 
 
 def subscribe_chat(db_path: Path, chat_id: int, title: str | None = None) -> None:
@@ -255,6 +326,7 @@ def add_todo(
     quantity: int | None = None,
     created_by_user_id: int | None = None,
     apartment: str | None = None,
+    assigned_to_user_id: int | None = None,
 ) -> Todo:
     if category == "shopping":
         due_date = None
@@ -262,8 +334,11 @@ def add_todo(
     with connect(db_path) as conn:
         cursor = conn.execute(
             """
-            INSERT INTO todos (text, created_by, due_date, category, quantity, created_by_user_id, apartment, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO todos (
+                text, created_by, due_date, category, quantity,
+                created_by_user_id, apartment, assigned_to_user_id, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 text.strip(),
@@ -273,6 +348,7 @@ def add_todo(
                 quantity,
                 created_by_user_id,
                 apartment,
+                assigned_to_user_id,
                 now,
             ),
         )
@@ -345,16 +421,38 @@ def complete_todo(db_path: Path, item_text: str) -> Todo | None:
     return _row_to_todo(row)
 
 
-def set_todo_done(db_path: Path, todo_id: int, done: bool = True) -> Todo | None:
+def set_todo_done(
+    db_path: Path,
+    todo_id: int,
+    done: bool = True,
+    *,
+    completed_by_user_id: int | None = None,
+) -> Todo | None:
     """Mark a todo done/undone by id (used by direct UI check-off toggles)."""
     with connect(db_path) as conn:
         row = conn.execute("SELECT * FROM todos WHERE id = ?", (todo_id,)).fetchone()
         if row is None:
             return None
-        conn.execute(
-            "UPDATE todos SET done = ? WHERE id = ?",
-            (1 if done else 0, todo_id),
-        )
+        if done:
+            now = datetime.now(timezone.utc).isoformat()
+            conn.execute(
+                """
+                UPDATE todos
+                SET done = 1,
+                    completed_by_user_id = COALESCE(?, completed_by_user_id),
+                    completed_at = COALESCE(completed_at, ?)
+                WHERE id = ?
+                """,
+                (completed_by_user_id, now, todo_id),
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE todos SET done = 0, completed_by_user_id = NULL, completed_at = NULL
+                WHERE id = ?
+                """,
+                (todo_id,),
+            )
         updated = conn.execute("SELECT * FROM todos WHERE id = ?", (todo_id,)).fetchone()
     return _row_to_todo(updated)
 
@@ -522,7 +620,12 @@ def remove_todo_by_id(db_path: Path, todo_id: int) -> Todo | None:
     return _row_to_todo(row)
 
 
-def complete_todo_by_id(db_path: Path, todo_id: int) -> Todo | None:
+def complete_todo_by_id(
+    db_path: Path,
+    todo_id: int,
+    *,
+    completed_by_user_id: int | None = None,
+) -> Todo | None:
     with connect(db_path) as conn:
         row = conn.execute(
             "SELECT * FROM todos WHERE id = ? AND done = 0",
@@ -530,7 +633,17 @@ def complete_todo_by_id(db_path: Path, todo_id: int) -> Todo | None:
         ).fetchone()
         if row is None:
             return None
-        conn.execute("UPDATE todos SET done = 1 WHERE id = ?", (todo_id,))
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            """
+            UPDATE todos
+            SET done = 1,
+                completed_by_user_id = COALESCE(?, completed_by_user_id),
+                completed_at = COALESCE(completed_at, ?)
+            WHERE id = ?
+            """,
+            (completed_by_user_id, now, todo_id),
+        )
         row = conn.execute("SELECT * FROM todos WHERE id = ?", (todo_id,)).fetchone()
     return _row_to_todo(row)
 
@@ -1095,3 +1208,181 @@ def remove_reminder(db_path: Path, item_text: str) -> Reminder | None:
             return None
         conn.execute("DELETE FROM reminders WHERE id = ?", (match["id"],))
     return _row_to_reminder(match)
+
+
+def resolve_user_id_by_name(
+    db_path: Path,
+    name: str,
+    *,
+    current_user_id: int | None = None,
+) -> int | None:
+    normalized = name.strip().lower()
+    if normalized in {"me", "myself", "mine"}:
+        return current_user_id
+    for profile in list_user_profiles(db_path):
+        candidates = {
+            profile.display_name.lower(),
+            (profile.username or "").lower(),
+        }
+        if normalized in candidates or normalized in profile.display_name.lower():
+            return profile.telegram_user_id
+    return None
+
+
+def get_user_display_name(db_path: Path, user_id: int | None) -> str | None:
+    if user_id is None:
+        return None
+    profile = get_user_profile(db_path, user_id)
+    return profile.display_name if profile else None
+
+
+def record_conversation_turn(
+    db_path: Path,
+    *,
+    chat_id: int,
+    user_id: int | None,
+    role: str,
+    text: str,
+    intent_json: str | None = None,
+) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    with connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO conversation_turns (chat_id, user_id, role, text, intent_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (chat_id, user_id, role, text.strip(), intent_json, now),
+        )
+
+
+def list_recent_turns(
+    db_path: Path,
+    *,
+    chat_id: int,
+    limit: int = 5,
+) -> list[ConversationTurn]:
+    with connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM conversation_turns
+            WHERE chat_id = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (chat_id, limit),
+        ).fetchall()
+    return [
+        ConversationTurn(
+            id=row["id"],
+            chat_id=row["chat_id"],
+            user_id=row["user_id"],
+            role=row["role"],
+            text=row["text"],
+            intent_json=row["intent_json"],
+            created_at=row["created_at"],
+        )
+        for row in rows
+    ]
+
+
+def upsert_memory_fact(
+    db_path: Path,
+    *,
+    user_id: int,
+    fact_key: str,
+    fact_value: str,
+    source: str | None = None,
+) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    with connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO memory_facts (user_id, fact_key, fact_value, source, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, fact_key) DO UPDATE SET
+                fact_value = excluded.fact_value,
+                source = excluded.source,
+                updated_at = excluded.updated_at
+            """,
+            (user_id, fact_key.strip(), fact_value.strip(), source, now),
+        )
+
+
+def list_memory_facts(
+    db_path: Path,
+    *,
+    user_id: int | None = None,
+    limit: int = 20,
+) -> list[MemoryFact]:
+    query = "SELECT * FROM memory_facts"
+    params: list[int] = []
+    if user_id is not None:
+        query += " WHERE user_id = ?"
+        params.append(user_id)
+    query += " ORDER BY updated_at DESC LIMIT ?"
+    params.append(limit)
+    with connect(db_path) as conn:
+        rows = conn.execute(query, params).fetchall()
+    return [
+        MemoryFact(
+            id=row["id"],
+            user_id=row["user_id"],
+            fact_key=row["fact_key"],
+            fact_value=row["fact_value"],
+            source=row["source"],
+            updated_at=row["updated_at"],
+        )
+        for row in rows
+    ]
+
+
+def list_completion_stats(db_path: Path, *, days: int = 7) -> list[CompletionStat]:
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    with connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                COALESCE(u.display_name, 'Unknown') AS display_name,
+                COUNT(*) AS count,
+                GROUP_CONCAT(t.text, '||') AS samples
+            FROM todos t
+            LEFT JOIN users u ON t.completed_by_user_id = u.telegram_user_id
+            WHERE t.done = 1
+              AND t.completed_at IS NOT NULL
+              AND t.completed_at >= ?
+            GROUP BY t.completed_by_user_id, display_name
+            ORDER BY count DESC, display_name ASC
+            """,
+            (since,),
+        ).fetchall()
+    stats: list[CompletionStat] = []
+    for row in rows:
+        samples = [part for part in (row["samples"] or "").split("||") if part][:5]
+        stats.append(
+            CompletionStat(
+                display_name=row["display_name"],
+                count=int(row["count"]),
+                samples=samples,
+            )
+        )
+    return stats
+
+
+def list_held_reminders(db_path: Path, today: date | None = None) -> list[Todo]:
+    """Open todos due on or before today that still have not been reminded."""
+    today = today or date.today()
+    with connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM todos
+            WHERE done = 0
+              AND due_date IS NOT NULL
+              AND due_date <= ?
+              AND reminder_sent = 0
+            ORDER BY due_date ASC, id ASC
+            """,
+            (today.isoformat(),),
+        ).fetchall()
+    return [_row_to_todo(row) for row in rows]
+

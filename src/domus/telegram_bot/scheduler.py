@@ -1,5 +1,5 @@
 import logging
-from datetime import date, time
+from datetime import date, datetime, time
 
 from telegram.ext import Application, ContextTypes
 
@@ -15,6 +15,7 @@ from domus.db import (
     mark_one_shot_sent,
     mark_todo_reminded,
 )
+from domus.quiet_hours import should_defer_reminder
 from domus.recurrence import format_recurrence
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,16 @@ logger = logging.getLogger(__name__)
 
 async def send_due_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
     settings: Settings = context.application.bot_data["settings"]
+    now = datetime.now()
+    if should_defer_reminder(
+        now,
+        start_hour=settings.quiet_hours_start,
+        end_hour=settings.quiet_hours_end,
+        enabled=settings.quiet_hours_enabled,
+    ):
+        logger.debug("Quiet hours active — deferring reminder pushes")
+        return
+
     today = date.today()
     due_todos = list_due_todos_for_reminder(settings.database_path, today)
     due_recurring = list_due_recurring_reminders(settings.database_path, today)

@@ -114,6 +114,100 @@ def normalize_plan_meal_name(name: str) -> str:
     return cleaned.strip(" .")
 
 
+def _split_recipe_ingredients(raw: str) -> list[str]:
+    parts = re.split(r",\s*|\s+and\s+", raw.strip())
+    return [part.strip(" .") for part in parts if part.strip(" .")]
+
+
+def parse_add_recipe_phrase(text: str) -> tuple[str, list[str], str | None] | None:
+    """Parse explicit recipe-add phrasing into name, ingredients, and optional meal type."""
+    normalized = text.strip().lower().rstrip(".!?")
+
+    prefix_match = re.match(
+        r"^(?:please |also |and )?(?:add|save|create|new)\s+(?:a\s+)?"
+        r"(?:(breakfast|lunch|dinner|snack)\s+)?(?:meal|recipe|dish)\s+(?:called\s+)?(.+)$",
+        normalized,
+    )
+    if not prefix_match:
+        alt_match = re.match(
+            r"^(?:please |also |and )?(?:add|save|create)\s+(.+?)\s+(?:as\s+(?:a\s+)?)?"
+            r"(?:(breakfast|lunch|dinner|snack)\s+)?(?:meal|recipe)\b(?:\s+with\s+(.+))?$",
+            normalized,
+        )
+        if not alt_match:
+            return None
+        name_part = alt_match.group(1).strip()
+        meal_type = alt_match.group(2)
+        ingredients_part = alt_match.group(3)
+        if ingredients_part:
+            ingredients = _split_recipe_ingredients(ingredients_part)
+            if name_part and ingredients:
+                return name_part, ingredients, meal_type
+        return None
+
+    meal_type = prefix_match.group(1)
+    rest = prefix_match.group(2).strip()
+    split_patterns = (
+        r"^(.+?):\s*(.+)$",
+        r"^(.+?)\s*[-–—]\s*(.+)$",
+        r"^(.+?)\s+with\s+(.+)$",
+        r"^(.+?)\s*\((.+)\)$",
+    )
+    for pattern in split_patterns:
+        match = re.match(pattern, rest)
+        if not match:
+            continue
+        name = match.group(1).strip(" .")
+        ingredients = _split_recipe_ingredients(match.group(2))
+        if name and ingredients:
+            return name, ingredients, meal_type
+    return None
+
+
+def handle_add_recipe(
+    intent,
+    db_path: Path,
+    *,
+    author: str | None = None,
+) -> str:
+    name = (intent.item or "").strip()
+    ingredients = [
+        part.strip()
+        for part in (intent.new_item or "").split("|")
+        if part.strip()
+    ]
+    meal_type = intent.category or infer_meal_type(name) or "dinner"
+
+    if not name:
+        return (
+            'Tell me the recipe name and ingredients, e.g. '
+            '"add meal grilled cheese: bread, cheese, butter".'
+        )
+    if not ingredients:
+        return (
+            f"What ingredients go in {name!r}? "
+            f'Try: "add meal {name}: ingredient1, ingredient2".'
+        )
+
+    food_db.init_food_tables(db_path)
+    try:
+        recipe = food_db.add_recipe(
+            db_path,
+            name,
+            meal_type=meal_type,
+            ingredient_details=[{"name": ing, "amount": ""} for ing in ingredients],
+            author=author,
+        )
+    except ValueError as exc:
+        return str(exc)
+
+    ing_list = ", ".join(recipe.ingredients)
+    return (
+        f'Added recipe "{recipe.name}" ({meal_type}) with '
+        f"{len(recipe.ingredients)} ingredients: {ing_list}."
+    )
+
+
 def format_meal_suggestions(
     foods: list[food_db.Food],
     meal_type: str,

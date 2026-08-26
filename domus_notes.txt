@@ -684,29 +684,29 @@ Implement these next, in rough priority order:
 
 
 Reminders & housekeeping
-  [ ] 6. QUIET HOURS — no pushes 22:00–07:00; batch into morning briefing (.env)
+  [x] 6. QUIET HOURS — no pushes 22:00–07:00; batch into morning briefing (.env)
   [ ] 12. DONE WITH RECURRING TASK ACK — log when trash/etc. is marked done
   [ ] 13. DATABASE BACKUP ON SCHEDULE — daily copy of data/domus.db → data/backups/
 
 
 Meals
-  [ ] Explicit recipe add — "add meal grilled cheese: bread, cheese, butter"
+  [x] Explicit recipe add — "add meal grilled cheese: bread, cheese, butter"
   [ ] Full weekly plan from Monday (currently today → Sunday only)
   [ ] Breakfast/lunch in weekly plan (dinners only today)
 
 
 Person-context (two users / two apartments)
-  [ ] Assign tasks to a person — assigned_to on todos
-  [ ] Log who completed a task — completed_by + completed_at
-  [ ] "Who did what" weekly stats
-  [ ] Location tag already partial (apartment on todos) — polish in UI + briefing
+  [x] Assign tasks to a person — assigned_to on todos
+  [x] Log who completed a task — completed_by + completed_at
+  [x] "Who did what" weekly stats
+  [x] Location tag already partial (apartment on todos) — polish in UI + briefing
 
 
 Platform / privacy
-  [ ] Redaction patterns in .env before OpenRouter
+  [x] Redaction patterns in .env before OpenRouter
   [ ] OpenRouter JSON repair (second LLM call — TBD)
-  [ ] Long-term conversation brain (Phase 2 — beyond last_todo_id)
-  [ ] Merge UI branch scaffold — read-only dashboard for lists, meals, profile
+  [x] Long-term conversation brain (Phase 2 — beyond last_todo_id)
+  [x] Merge UI branch scaffold — read-only dashboard for lists, meals, profile
 
 
 Voice (deferred)
@@ -784,6 +784,7 @@ cancel_timer, undo, snooze_reminder,
 suggest_meal, log_meal, plan_meal, plan_week, show_meal_plan,
 missing_ingredients,
 add_recurring_reminder, add_relative_reminder, list_reminders, remove_reminder,
+add_recipe, who_did_what,
 daily_briefing,
 help, greeting, thanks
 

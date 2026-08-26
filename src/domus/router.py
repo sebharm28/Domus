@@ -1,6 +1,7 @@
 from domus.config import Settings
 from domus import db
 from domus.intents import parse_intents
+from domus.memory import record_exchange
 from domus.todos import handle_intents
 
 
@@ -20,13 +21,29 @@ async def route_message(
         display_name,
         username=username,
     )
-    intents = await parse_intents(text, settings, private_mode=private_mode)
+    intents = await parse_intents(
+        text,
+        settings,
+        private_mode=private_mode,
+        db_path=settings.database_path,
+        chat_id=chat_id,
+        user_id=telegram_user_id,
+    )
     reply = handle_intents(
         intents,
         settings.database_path,
         display_name,
         chat_id=chat_id,
         telegram_user_id=telegram_user_id,
+    )
+    record_exchange(
+        settings.database_path,
+        chat_id=chat_id,
+        user_id=telegram_user_id,
+        user_text=text,
+        assistant_text=reply,
+        intents=intents,
+        private_mode=private_mode,
     )
     if private_mode and reply.startswith("I didn't understand"):
         return (

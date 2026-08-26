@@ -17,6 +17,10 @@ def _todo_snapshot(todo: db.Todo) -> dict:
         "created_at": todo.created_at,
         "quantity": todo.quantity,
         "apartment": todo.apartment,
+        "created_by_user_id": todo.created_by_user_id,
+        "assigned_to_user_id": todo.assigned_to_user_id,
+        "completed_by_user_id": todo.completed_by_user_id,
+        "completed_at": todo.completed_at,
     }
 
 

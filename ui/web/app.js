@@ -20,13 +20,23 @@ const tagFilterEl = document.getElementById("tag-filter");
 const newRecipeBtn = document.getElementById("new-recipe-btn");
 const modalOverlay = document.getElementById("modal-overlay");
 const modalEl = document.getElementById("modal");
+const profilesEl = document.getElementById("profiles");
+const statsEl = document.getElementById("stats");
+const settingsEl = document.getElementById("settings");
+
+const USER_ID = 1;
+const DISPLAY_NAME = localStorage.getItem("domus-display-name") || "You";
 
 const state = {
   todos: [],
   recipes: [],
   tags: [],
+  profiles: [],
+  settings: null,
+  stats: [],
   activeTag: null,
   recipesLoaded: false,
+  householdLoaded: false,
 };
 
 const EMOJI = {
@@ -93,6 +103,7 @@ function switchView(name) {
     t.classList.toggle("is-active", t.dataset.view === name)
   );
   if (name === "recipes" && !state.recipesLoaded) loadRecipes();
+  if (name === "household" && !state.householdLoaded) loadHousehold();
 }
 
 tabbar.querySelectorAll(".tab").forEach((tab) => {
@@ -106,6 +117,24 @@ async function api(path, body) {
     : {};
   const res = await fetch(path, opts);
   return res.json();
+}
+
+async function loadHousehold() {
+  try {
+    const [profiles, settings, stats] = await Promise.all([
+      api("/api/profiles"),
+      api("/api/settings"),
+      api("/api/stats"),
+    ]);
+    state.profiles = profiles.profiles || [];
+    state.settings = settings;
+    state.stats = stats.stats || [];
+    state.householdLoaded = true;
+    renderHousehold();
+    setConnected(true);
+  } catch (e) {
+    setConnected(false);
+  }
 }
 
 async function loadTodos() {
@@ -188,17 +217,60 @@ function renderTasks(items) {
     const row = document.createElement("div");
     row.className = "row";
     const due = item.due_date ? `due ${item.due_date}` : "";
+    const assignee = item.assigned_to ? `→ ${item.assigned_to}` : "";
+    const apt = item.apartment ? `[${item.apartment}]` : "";
+    const meta = [apt, assignee, due].filter(Boolean).join(" · ");
     row.innerHTML = `
       <span class="check" title="Mark done"></span>
       <span class="label">${escapeHtml(item.name)}</span>
       <span class="badge">${escapeHtml(item.category)}</span>
-      <span class="meta">${escapeHtml(due)}</span>
+      <span class="meta">${escapeHtml(meta)}</span>
       <button class="del" title="Remove" aria-label="Remove">×</button>
     `;
     row.querySelector(".check").addEventListener("click", () => checkOff(row, item.id));
     row.querySelector(".del").addEventListener("click", () => removeItem(row, item.id));
     tasksEl.appendChild(row);
   }
+}
+
+function renderHousehold() {
+  if (!profilesEl) return;
+
+  if (state.profiles.length === 0) {
+    profilesEl.innerHTML = `<p class="empty">No profiles yet — chat with Domus to create one.</p>`;
+  } else {
+    profilesEl.innerHTML = state.profiles.map((p) => `
+      <article class="profile-card">
+        <h3>${escapeHtml(p.display_name)}</h3>
+        ${p.apartment ? `<p><strong>Apartment:</strong> ${escapeHtml(p.apartment)}</p>` : ""}
+        ${p.diet ? `<p><strong>Diet:</strong> ${escapeHtml(p.diet)}</p>` : ""}
+        ${p.likes ? `<p><strong>Likes:</strong> ${escapeHtml(p.likes)}</p>` : ""}
+        ${p.dislikes ? `<p><strong>Dislikes:</strong> ${escapeHtml(p.dislikes)}</p>` : ""}
+        ${p.allergies ? `<p><strong>Allergies:</strong> ${escapeHtml(p.allergies)}</p>` : ""}
+      </article>
+    `).join("");
+  }
+
+  if (state.stats.length === 0) {
+    statsEl.innerHTML = `<p class="empty">No completed tasks in the last 7 days.</p>`;
+  } else {
+    statsEl.innerHTML = state.stats.map((s) => `
+      <div class="stat-row">
+        <strong>${escapeHtml(s.display_name)}</strong>
+        <span>${s.count} completed</span>
+        ${s.samples?.length ? `<span class="muted">${escapeHtml(s.samples.slice(0, 2).join(", "))}</span>` : ""}
+      </div>
+    `).join("");
+  }
+
+  const cfg = state.settings || {};
+  settingsEl.innerHTML = `
+    <p><strong>Morning briefing:</strong> ${cfg.briefing_hour ?? 8}:00</p>
+    <p><strong>Evening summary:</strong> ${cfg.evening_briefing_hour ?? 20}:00</p>
+    <p><strong>Quiet hours:</strong> ${cfg.quiet_hours_enabled ? `${cfg.quiet_hours_start}:00–${cfg.quiet_hours_end}:00` : "off"}</p>
+    <p><strong>Redaction:</strong> ${cfg.redaction_enabled ? "on" : "off"}</p>
+    <p class="muted section-hint">Configure via .env — QUIET_HOURS_*, REDACTION_*</p>
+  `;
 }
 
 function renderTagFilter() {
@@ -514,9 +586,13 @@ function addBubble(text, who) {
 }
 
 async function sendMessage(text) {
-  addBubble(text, "You");
+  addBubble(text, DISPLAY_NAME);
   try {
-    const data = await api("/api/message", { text, user: "You" });
+    const data = await api("/api/message", {
+      text,
+      user: DISPLAY_NAME,
+      user_id: USER_ID,
+    });
     if (data.reply) addBubble(data.reply, "Domus");
     if (data.todos) {
       state.todos = data.todos;
@@ -543,7 +619,7 @@ async function addTodo(name, category) {
 async function checkOff(el, id) {
   el.classList.add("checking");
   try {
-    const data = await api("/api/todos/toggle", { id, done: true });
+    const data = await api("/api/todos/toggle", { id, done: true, user_id: USER_ID });
     setTimeout(() => {
       state.todos = data.todos || [];
       renderTodos();

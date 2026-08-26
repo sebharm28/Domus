@@ -11,6 +11,7 @@ def build_daily_briefing(db_path: Path, today: date | None = None) -> str:
     today = today or date.today()
     due_today = db.list_todos_due_on(db_path, today)
     overdue = db.list_overdue_todos(db_path, today)
+    held = db.list_held_reminders(db_path, today)
     shopping = db.list_open_todos(db_path, category="shopping")
     highlighted_ids = {todo.id for todo in due_today} | {todo.id for todo in overdue}
     other_open = [
@@ -20,6 +21,15 @@ def build_daily_briefing(db_path: Path, today: date | None = None) -> str:
     ]
 
     lines = [f"Daily briefing — {today.strftime('%a, %d %b %Y')}", ""]
+
+    if held:
+        lines.append("Held overnight (quiet hours):")
+        for todo in held[:5]:
+            due = format_due_date(todo.due_date)
+            lines.append(f"• {todo.text} — due: {due}")
+        if len(held) > 5:
+            lines.append(f"• …and {len(held) - 5} more")
+        lines.append("")
 
     if due_today:
         lines.append("Due today:")

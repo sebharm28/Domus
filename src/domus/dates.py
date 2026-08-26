@@ -88,6 +88,21 @@ def parse_apartment_hint(text: str) -> tuple[str, str | None]:
     return cleaned, apartment
 
 
+def parse_assignee_hint(text: str) -> tuple[str, str | None]:
+    patterns = (
+        r"\b(?:assign(?:ed)?(?: to)?|for)\s+(me|myself|mine|[a-z][a-z0-9 _-]{1,30})\b",
+        r"\bfor\s+([a-z][a-z0-9 _-]{1,30})\s+to\s+(?:do|handle|take care of)\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if not match:
+            continue
+        assignee = match.group(1).strip()
+        cleaned = (text[: match.start()] + text[match.end() :]).strip(" ,:-")
+        return cleaned, assignee
+    return text, None
+
+
 def extract_due_date_from_message(text: str, today: date | None = None) -> str | None:
     """Find a due date anywhere in the message, including follow-up clauses."""
     _, due = parse_due_date(text, today)

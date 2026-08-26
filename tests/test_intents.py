@@ -21,6 +21,11 @@ def _test_settings(db_path: Path) -> Settings:
         database_path=db_path,
         briefing_hour=8,
         evening_briefing_hour=20,
+        quiet_hours_enabled=True,
+        quiet_hours_start=22,
+        quiet_hours_end=7,
+        redaction_enabled=False,
+        redaction_patterns=(),
     )
 
 

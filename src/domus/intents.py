@@ -2,15 +2,18 @@ import json
 import logging
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 import httpx
 
 from domus.categories import infer_category
 from domus.config import Settings
-from domus.dates import parse_category_hint, parse_due_date, extract_due_date_from_message, parse_apartment_hint
+from domus.dates import parse_category_hint, parse_due_date, extract_due_date_from_message, parse_apartment_hint, parse_assignee_hint
+from domus.memory import build_openrouter_context
+from domus.redaction import redact_for_llm
 from domus.natural_language import try_parse_natural_add
-from domus.meals import _extract_missing_meal_query, normalize_plan_meal_name
+from domus.meals import _extract_missing_meal_query, normalize_plan_meal_name, parse_add_recipe_phrase
 from domus.recurrence import parse_reminder_phrase
 from domus.relative_reminders import parse_relative_reminder_phrase
 from domus.structured_add import try_parse_structured_add
@@ -42,6 +45,8 @@ IntentName = Literal[
     "show_profile",
     "log_preference",
     "log_dispreference",
+    "add_recipe",
+    "who_did_what",
     "cancel_timer",
     "undo",
     "snooze_reminder",
@@ -75,6 +80,8 @@ VALID_INTENTS = {
     "show_profile",
     "log_preference",
     "log_dispreference",
+    "add_recipe",
+    "who_did_what",
     "cancel_timer",
     "undo",
     "snooze_reminder",
@@ -93,6 +100,7 @@ class Intent:
     due_date: str | None = None
     category: str | None = None
     apartment: str | None = None
+    assignee: str | None = None
     recurrence: str | None = None
     delay_minutes: int | None = None
 
@@ -100,7 +108,7 @@ class Intent:
 SYSTEM_PROMPT = """You parse household assistant commands for a Telegram bot.
 Users write in casual, messy natural language — typos and unclear phrasing are normal.
 Return ONLY valid JSON with this shape:
-{"intents":[{"intent":"add_todo|complete_todo|remove_todo|update_todo|list_todos|export_list|clear_shopping_list|clear_todos|suggest_meal|log_meal|plan_meal|plan_week|show_meal_plan|missing_ingredients|add_recurring_reminder|list_reminders|remove_reminder|daily_briefing|help|greeting|thanks|unknown","item":string|null,"due_date":"YYYY-MM-DD"|null,"category":"shopping|household|admin|maintenance|personal|general"|null,"recurrence":"daily|weekly:monday|monthly:1"|null}, ...]}
+{"intents":[{"intent":"add_todo|complete_todo|remove_todo|update_todo|list_todos|export_list|clear_shopping_list|clear_todos|suggest_meal|log_meal|plan_meal|plan_week|show_meal_plan|missing_ingredients|add_recipe|add_recurring_reminder|list_reminders|remove_reminder|daily_briefing|help|greeting|thanks|unknown","item":string|null,"new_item":string|null,"due_date":"YYYY-MM-DD"|null,"category":"shopping|household|admin|maintenance|personal|general|breakfast|lunch|dinner|snack"|null,"recurrence":"daily|weekly:monday|monthly:1"|null}, ...]}
 
 Rules:
 - Interpret intent generously from context; do not require exact command wording.
@@ -122,6 +130,7 @@ Rules:
 - plan_week: user wants a dinner plan for the rest of the week with shopping list updates
 - show_meal_plan: user asks to see the current weekly meal plan
 - missing_ingredients: user asks what's still needed for a meal (read-only, no list changes)
+- add_recipe: user saves a custom recipe with ingredients (e.g. "add meal grilled cheese: bread, cheese, butter"); item=recipe name, new_item=comma-separated ingredients, category=meal type when mentioned
 - add_recurring_reminder: repeating household reminders (weekly trash, monthly rent)
 - list_reminders: show recurring reminders and pending one-shot timers
 - snooze_reminder: push a due task or timer to a later time
@@ -143,6 +152,7 @@ Natural language examples:
 "let's make curry with rice tonight" -> {"intents":[{"intent":"plan_meal","item":"curry with rice","due_date":null,"category":null,"recurrence":null}]}
 "plan meals for this week" -> {"intents":[{"intent":"plan_week","item":null,"due_date":null,"category":null,"recurrence":null}]}
 "what's missing for dinner?" -> {"intents":[{"intent":"missing_ingredients","item":"dinner","due_date":null,"category":null,"recurrence":null}]}
+"add meal grilled cheese: bread, cheese, butter" -> {"intents":[{"intent":"add_recipe","item":"grilled cheese","new_item":"bread, cheese, butter","due_date":null,"category":"dinner","recurrence":null}]}
 "remind us every Tuesday to take out the trash" -> {"intents":[{"intent":"add_recurring_reminder","item":"take out the trash","due_date":null,"category":null,"recurrence":"weekly:tuesday"}]}
 "what's on today?" -> {"intents":[{"intent":"daily_briefing","item":null,"due_date":null,"category":null,"recurrence":null}]}
 "could you show me the shopping list" -> {"intents":[{"intent":"list_todos","item":null,"due_date":null,"category":null}]}
@@ -321,6 +331,7 @@ def _merge_due_dates(text: str, intents: list[Intent]) -> list[Intent]:
 def _build_add_intent(raw_item: str, default_category: str | None = None) -> Intent:
     text, category_hint = parse_category_hint(raw_item)
     text, apartment_hint = parse_apartment_hint(text)
+    text, assignee_hint = parse_assignee_hint(text)
     text, due_date = parse_due_date(text)
     text = re.sub(r"\s+", " ", text).strip(" ,:-")
     return Intent(
@@ -329,6 +340,7 @@ def _build_add_intent(raw_item: str, default_category: str | None = None) -> Int
         due_date=due_date,
         category=infer_category(text, category_hint or default_category),
         apartment=apartment_hint,
+        assignee=assignee_hint,
     )
 
 
@@ -367,6 +379,7 @@ def _finalize_add_intents(intents: list[Intent]) -> list[Intent]:
             finalized.append(intent)
             continue
         text, apartment = parse_apartment_hint(intent.item)
+        text, assignee = parse_assignee_hint(text)
         text, category_hint = parse_category_hint(text)
         text, due_date = parse_due_date(text)
         text = re.sub(r"\s+", " ", text).strip(" ,:-")
@@ -377,6 +390,7 @@ def _finalize_add_intents(intents: list[Intent]) -> list[Intent]:
                 due_date=None if (intent.category or infer_category(text, category_hint)) == "shopping" else (intent.due_date or due_date),
                 category=intent.category or infer_category(text, category_hint),
                 apartment=intent.apartment or apartment,
+                assignee=intent.assignee or assignee,
             )
         )
     return finalized
@@ -405,6 +419,9 @@ async def parse_intents(
     settings: Settings,
     *,
     private_mode: bool = False,
+    db_path: Path | None = None,
+    chat_id: int | None = None,
+    user_id: int | None = None,
 ) -> list[Intent]:
     rule_intents = _rules_resolve(text)
     if _has_actionable_intent(rule_intents):
@@ -417,7 +434,19 @@ async def parse_intents(
 
     if settings.openrouter_api_key:
         try:
-            intents = await _parse_with_openrouter(text, settings)
+            safe_text, _ = redact_for_llm(text, settings)
+            memory_context = ""
+            if db_path is not None:
+                memory_context = build_openrouter_context(
+                    db_path,
+                    chat_id=chat_id,
+                    user_id=user_id,
+                )
+            intents = await _parse_with_openrouter(
+                safe_text,
+                settings,
+                memory_context=memory_context,
+            )
             if intents and _has_actionable_intent(intents):
                 logger.info("OpenRouter parsed %d intent(s) for %r", len(intents), text)
                 return intents
@@ -489,7 +518,12 @@ def _intents_from_payload(parsed: dict | list) -> list[Intent]:
     return [Intent(name="unknown")]
 
 
-async def _parse_with_openrouter(text: str, settings: Settings) -> list[Intent]:
+async def _parse_with_openrouter(
+    text: str,
+    settings: Settings,
+    *,
+    memory_context: str = "",
+) -> list[Intent]:
     from datetime import date
 
     today = date.today()
@@ -497,6 +531,8 @@ async def _parse_with_openrouter(text: str, settings: Settings) -> list[Intent]:
         f"{SYSTEM_PROMPT}\nToday is {today.isoformat()} ({today.strftime('%A')}). "
         "Use this when resolving relative dates like tomorrow or friday."
     )
+    if memory_context:
+        system_prompt += f"\n\n{memory_context}"
     payload = {
         "model": settings.openrouter_model,
         "messages": [
@@ -546,6 +582,21 @@ def _split_items(raw: str) -> list[str]:
 def _split_clauses(text: str) -> list[str]:
     parts = re.split(r"(?<=[.!?])\s+|[\n;]+|\s*,\s*(?=please\s)", text.strip(), flags=re.IGNORECASE)
     return [part.strip(" ,:;-") for part in parts if part.strip(" ,:;-")]
+
+
+def _parse_add_recipe_intents(normalized: str) -> list[Intent] | None:
+    parsed = parse_add_recipe_phrase(normalized)
+    if not parsed:
+        return None
+    name, ingredients, meal_type = parsed
+    return [
+        Intent(
+            name="add_recipe",
+            item=name,
+            new_item="|".join(ingredients),
+            category=meal_type,
+        )
+    ]
 
 
 def _parse_meal_suggest_intents(normalized: str) -> list[Intent] | None:
@@ -670,6 +721,17 @@ def _parse_clause_intents(normalized: str) -> list[Intent]:
         normalized,
     ):
         return [Intent(name="show_meal_plan")]
+
+    if re.search(
+        r"who (?:did|completed|finished|checked off)(?: what| which tasks?)?(?: this week| lately| recently)?|"
+        r"who(?:'s| is) been doing (?:the )?(?:tasks|chores)",
+        normalized,
+    ):
+        return [Intent(name="who_did_what")]
+
+    add_recipe = _parse_add_recipe_intents(normalized)
+    if add_recipe:
+        return add_recipe
 
     if re.search(
         r"what(?:'s| is) missing|what do (?:we|i) need(?: to buy)? for",

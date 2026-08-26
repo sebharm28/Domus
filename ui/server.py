@@ -44,15 +44,20 @@ from domus.core import (  # noqa: E402  (import after sys.path tweak)
     add_recipe,
     build_settings,
     delete_item,
+    get_profile,
     handle_user_message,
     init_storage,
+    list_completion_stats,
     list_open_todos,
+    list_profiles,
     list_recipe_tags,
     list_recipes,
     plan_recipe,
     set_todo_done,
+    settings_payload,
     update_recipe,
 )
+from domus import db
 from domus.shopping import (  # noqa: E402
     effective_quantity,
     shopping_item_name,
@@ -90,10 +95,42 @@ def _todo_payload() -> list[dict]:
                 "category": todo.category,
                 "due_date": todo.due_date,
                 "created_by": todo.created_by,
+                "assigned_to": db.get_user_display_name(
+                    SETTINGS.database_path,
+                    todo.assigned_to_user_id,
+                ),
+                "apartment": todo.apartment,
                 "done": todo.done,
             }
         )
     return payload
+
+
+def _profiles_payload() -> list[dict]:
+    return [
+        {
+            "id": profile.telegram_user_id,
+            "display_name": profile.display_name,
+            "username": profile.username,
+            "apartment": profile.apartment,
+            "diet": profile.diet,
+            "allergies": profile.allergies,
+            "likes": profile.likes,
+            "dislikes": profile.dislikes,
+        }
+        for profile in list_profiles(SETTINGS.database_path)
+    ]
+
+
+def _stats_payload() -> list[dict]:
+    return [
+        {
+            "display_name": stat.display_name,
+            "count": stat.count,
+            "samples": stat.samples,
+        }
+        for stat in list_completion_stats(SETTINGS.database_path, days=7)
+    ]
 
 
 def _recipe_payload() -> list[dict]:
@@ -168,6 +205,15 @@ class DomusHandler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/recipes"):
             self._send_json(_recipes_response())
             return
+        if self.path.startswith("/api/profiles"):
+            self._send_json({"profiles": _profiles_payload()})
+            return
+        if self.path.startswith("/api/settings"):
+            self._send_json(settings_payload(SETTINGS))
+            return
+        if self.path.startswith("/api/stats"):
+            self._send_json({"stats": _stats_payload()})
+            return
         if self.path == "/" or not self.path.startswith("/api"):
             self._serve_static(self.path)
             return
@@ -178,6 +224,7 @@ class DomusHandler(BaseHTTPRequestHandler):
             body = self._read_json()
             text = strip_wake_word((body.get("text") or "").strip())
             display_name = (body.get("user") or "You").strip() or "You"
+            user_id = int(body.get("user_id") or USER_ID)
             if not text:
                 self._send_json({"error": "empty message"}, status=400)
                 return
@@ -186,7 +233,7 @@ class DomusHandler(BaseHTTPRequestHandler):
                     text,
                     SETTINGS,
                     chat_id=CHAT_ID,
-                    user_id=USER_ID,
+                    user_id=user_id,
                     display_name=display_name,
                 )
             )
@@ -201,7 +248,13 @@ class DomusHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "invalid id"}, status=400)
                 return
             done = bool(body.get("done", True))
-            set_todo_done(SETTINGS.database_path, todo_id, done=done)
+            user_id = int(body.get("user_id") or USER_ID)
+            set_todo_done(
+                SETTINGS.database_path,
+                todo_id,
+                done=done,
+                completed_by_user_id=user_id if done else None,
+            )
             self._send_json({"todos": _todo_payload()})
             return
 
