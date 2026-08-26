@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Domus</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
@@ -12,57 +12,90 @@
         <div class="brand">
           <span class="brand-mark">◈</span>
           <div>
-            <h1>Domus</h1>
+            <h1 id="page-title">Home</h1>
             <p class="tagline">Your household assistant</p>
           </div>
         </div>
         <div class="topbar-right">
-          <button
-            class="theme-toggle"
-            id="theme-toggle"
-            type="button"
-            aria-label="Toggle dark mode"
-            title="Toggle dark mode"
-          >
+          <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">
             <span class="theme-icon">🌙</span>
           </button>
           <span class="pill" id="connection">connecting…</span>
         </div>
       </header>
 
-      <main class="panes">
-        <!-- Chat pane -->
-        <section class="pane chat-pane">
-          <div class="pane-head">
-            <h2>Chat</h2>
-            <span class="hint">Just type — “Domus,” is optional</span>
+      <main class="content">
+        <!-- HOME / overview -->
+        <section class="view is-active" id="view-home" data-title="Home">
+          <div class="summary" id="summary"></div>
+          <div class="chat">
+            <div class="messages" id="messages"></div>
+            <form class="composer" id="composer" autocomplete="off">
+              <input id="input" type="text" placeholder="Ask Domus…  e.g. plan meals for this week" aria-label="Message Domus" />
+              <button type="submit" aria-label="Send">Send</button>
+            </form>
           </div>
-          <div class="messages" id="messages"></div>
-          <form class="composer" id="composer" autocomplete="off">
-            <input
-              id="input"
-              type="text"
-              placeholder="Domus, add milk and eggs to the list"
-              aria-label="Message Domus"
-            />
-            <button type="submit" aria-label="Send">Send</button>
-          </form>
         </section>
 
-        <!-- Shopping list pane -->
-        <section class="pane list-pane">
-          <div class="pane-head">
-            <h2>Shopping list</h2>
-            <button class="ghost" id="refresh" title="Refresh">⟳</button>
-          </div>
-          <div class="list" id="shopping"></div>
+        <!-- SHOPPING -->
+        <section class="view" id="view-shopping" data-title="Shopping list">
+          <form class="addbar" id="add-shopping" autocomplete="off">
+            <input id="shopping-input" type="text" placeholder="Add an item…  e.g. 2 milk" aria-label="Add shopping item" />
+            <button type="submit" class="add-btn" aria-label="Add item">+</button>
+          </form>
+          <div class="grid" id="shopping"></div>
+        </section>
 
-          <div class="pane-head sub">
-            <h2>Other tasks</h2>
-          </div>
-          <div class="tasks" id="tasks"></div>
+        <!-- TASKS -->
+        <section class="view" id="view-tasks" data-title="To-do list">
+          <form class="addbar" id="add-task" autocomplete="off">
+            <input id="task-input" type="text" placeholder="Add a task…  e.g. pay rent" aria-label="Add task" />
+            <select id="task-category" aria-label="Task category">
+              <option value="general">General</option>
+              <option value="household">Household</option>
+              <option value="admin">Admin</option>
+              <option value="maintenance">Maintenance</option>
+              <option value="personal">Personal</option>
+            </select>
+            <button type="submit" class="add-btn" aria-label="Add task">+</button>
+          </form>
+          <div class="rows" id="tasks"></div>
+        </section>
+
+        <!-- RECIPES -->
+        <section class="view" id="view-recipes" data-title="Recipes">
+          <p class="section-hint">Tap “Add missing” to send a recipe’s missing ingredients to your shopping list.</p>
+          <div class="recipes" id="recipes"></div>
         </section>
       </main>
+
+      <!-- Liquid-glass bottom navigation -->
+      <nav class="tabbar" id="tabbar">
+        <button class="tab is-active" data-view="home" aria-label="Home">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 10.5 12 3l9 7.5" /><path d="M5 9.5V20a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9.5" /><path d="M9.5 21v-6h5v6" />
+          </svg>
+          <span>Home</span>
+        </button>
+        <button class="tab" data-view="shopping" aria-label="Shopping list">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M6 7h12l-1 13H7L6 7Z" /><path d="M9 7V5.5a3 3 0 0 1 6 0V7" />
+          </svg>
+          <span>Shopping</span>
+        </button>
+        <button class="tab" data-view="tasks" aria-label="To-do list">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 6h11" /><path d="M9 12h11" /><path d="M9 18h11" /><path d="m4 6 1 1 2-2" /><path d="m4 12 1 1 2-2" /><path d="m4 18 1 1 2-2" />
+          </svg>
+          <span>Tasks</span>
+        </button>
+        <button class="tab" data-view="recipes" aria-label="Recipes">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M7 4a3 3 0 0 0-1 5.8V19a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V9.8A3 3 0 0 0 17 4a3 3 0 0 0-5-1 3 3 0 0 0-5 1Z" /><path d="M6.5 16h11" />
+          </svg>
+          <span>Recipes</span>
+        </button>
+      </nav>
     </div>
 
     <script src="app.js"></script>

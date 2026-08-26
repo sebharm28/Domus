@@ -346,6 +346,16 @@ def remove_todo(db_path: Path, item_text: str) -> Todo | None:
     return _row_to_todo(match)
 
 
+def delete_todo_by_id(db_path: Path, todo_id: int) -> Todo | None:
+    """Delete a todo by id (used by direct UI remove actions)."""
+    with connect(db_path) as conn:
+        row = conn.execute("SELECT * FROM todos WHERE id = ?", (todo_id,)).fetchone()
+        if row is None:
+            return None
+        conn.execute("DELETE FROM todos WHERE id = ?", (todo_id,))
+    return _row_to_todo(row)
+
+
 def get_open_todo(db_path: Path, todo_id: int) -> Todo | None:
     with connect(db_path) as conn:
         row = conn.execute(

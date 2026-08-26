@@ -40,10 +40,14 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from domus.core import (  # noqa: E402  (import after sys.path tweak)
+    add_item,
     build_settings,
+    delete_item,
     handle_user_message,
     init_storage,
     list_open_todos,
+    list_recipes,
+    plan_recipe,
     set_todo_done,
 )
 from domus.shopping import (  # noqa: E402
@@ -87,6 +91,20 @@ def _todo_payload() -> list[dict]:
             }
         )
     return payload
+
+
+def _recipe_payload() -> list[dict]:
+    return [
+        {
+            "id": food.id,
+            "name": food.name,
+            "meal_type": food.meal_type,
+            "ingredients": food.ingredients,
+            "prep_time_min": food.prep_time_min,
+            "notes": food.notes,
+        }
+        for food in list_recipes(SETTINGS.database_path)
+    ]
 
 
 class DomusHandler(BaseHTTPRequestHandler):
@@ -134,6 +152,9 @@ class DomusHandler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/todos"):
             self._send_json({"todos": _todo_payload()})
             return
+        if self.path.startswith("/api/recipes"):
+            self._send_json({"recipes": _recipe_payload()})
+            return
         if self.path == "/" or not self.path.startswith("/api"):
             self._serve_static(self.path)
             return
@@ -169,6 +190,45 @@ class DomusHandler(BaseHTTPRequestHandler):
             done = bool(body.get("done", True))
             set_todo_done(SETTINGS.database_path, todo_id, done=done)
             self._send_json({"todos": _todo_payload()})
+            return
+
+        if self.path == "/api/todos/add":
+            body = self._read_json()
+            name = (body.get("name") or "").strip()
+            if not name:
+                self._send_json({"error": "empty name"}, status=400)
+                return
+            category = (body.get("category") or "shopping").strip() or "shopping"
+            due_date = (body.get("due_date") or None) or None
+            add_item(
+                SETTINGS.database_path,
+                name,
+                category=category,
+                created_by="You",
+                due_date=due_date,
+            )
+            self._send_json({"todos": _todo_payload()})
+            return
+
+        if self.path == "/api/todos/remove":
+            body = self._read_json()
+            try:
+                todo_id = int(body.get("id"))
+            except (TypeError, ValueError):
+                self._send_json({"error": "invalid id"}, status=400)
+                return
+            delete_item(SETTINGS.database_path, todo_id)
+            self._send_json({"todos": _todo_payload()})
+            return
+
+        if self.path == "/api/recipes/plan":
+            body = self._read_json()
+            name = (body.get("name") or "").strip()
+            if not name:
+                self._send_json({"error": "empty name"}, status=400)
+                return
+            reply = plan_recipe(SETTINGS.database_path, name, created_by="You")
+            self._send_json({"reply": reply, "todos": _todo_payload()})
             return
 
         self.send_error(404, "Not found")

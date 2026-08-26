@@ -28,22 +28,30 @@ from domus.config import (
 )
 from domus.db import (
     Todo,
+    delete_todo_by_id,
     init_db,
     list_open_todos,
     set_todo_done,
 )
-from domus.food_db import init_food_tables
+from domus.food_db import Food, init_food_tables, list_foods
+from domus.meals import handle_plan_meal
 from domus.router import route_message
+from domus.todos import _add_or_merge_todo
 
 __all__ = [
     "Settings",
     "Todo",
+    "Food",
     "get_settings",
     "build_settings",
     "init_storage",
     "handle_user_message",
     "list_open_todos",
+    "add_item",
+    "delete_item",
     "set_todo_done",
+    "list_recipes",
+    "plan_recipe",
     "route_message",
 ]
 
@@ -68,6 +76,44 @@ def init_storage(db_path: Path) -> None:
     """Create the database schema and seed tables if they do not exist yet."""
     init_db(db_path)
     init_food_tables(db_path)
+
+
+def add_item(
+    db_path: Path,
+    name: str,
+    *,
+    category: str = "shopping",
+    created_by: str = "You",
+    due_date: str | None = None,
+) -> Todo | None:
+    """Add (or quantity-merge) an item directly, without going through chat.
+
+    Shopping items merge quantities the same way a chat "add" does; other
+    categories are appended as tasks.
+    """
+    _reply, todo = _add_or_merge_todo(
+        db_path,
+        name,
+        created_by,
+        due_date=due_date,
+        category=category,
+    )
+    return todo
+
+
+def delete_item(db_path: Path, todo_id: int) -> Todo | None:
+    """Remove an item/task entirely by id."""
+    return delete_todo_by_id(db_path, todo_id)
+
+
+def list_recipes(db_path: Path) -> list[Food]:
+    """All known recipes/meal ideas, for a recipe-overview screen."""
+    return list_foods(db_path)
+
+
+def plan_recipe(db_path: Path, name: str, *, created_by: str = "You") -> str:
+    """Plan a recipe by name, adding any missing ingredients to the list."""
+    return handle_plan_meal(name, db_path, created_by, meal_name=name)
 
 
 async def handle_user_message(
