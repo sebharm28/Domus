@@ -98,6 +98,22 @@ def handle_remove_reminder(db_path: Path, item: str | None) -> str:
     return f'Removed recurring reminder: "{reminder.text}".'
 
 
+def handle_ack_recurring_reminder(db_path: Path, item: str | None) -> str:
+    if not item:
+        return "Which recurring task did you finish?"
+    normalized = item.strip().lower()
+    for reminder in db.list_reminders(db_path):
+        task = reminder.text.lower()
+        if normalized in task or task in normalized:
+            updated = db.advance_reminder(db_path, reminder.id)
+            next_due = format_due_date(updated.next_due)
+            return (
+                f'Logged "{updated.text}" as done. '
+                f"Next due: {next_due} ({format_recurrence(updated.recurrence)})."
+            )
+    return f'I could not match "{item}" to a recurring reminder.'
+
+
 def handle_cancel_timer(
     db_path: Path,
     chat_id: int | None,

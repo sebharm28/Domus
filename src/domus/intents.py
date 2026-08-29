@@ -10,7 +10,7 @@ import httpx
 from domus.categories import infer_category
 from domus.config import Settings
 from domus.dates import parse_category_hint, parse_due_date, extract_due_date_from_message, parse_apartment_hint, parse_assignee_hint
-from domus.memory import build_openrouter_context
+from domus.german import normalize_german_input
 from domus.redaction import redact_for_llm
 from domus.natural_language import try_parse_natural_add
 from domus.meals import _extract_missing_meal_query, normalize_plan_meal_name, parse_add_recipe_phrase
@@ -40,6 +40,7 @@ IntentName = Literal[
     "add_relative_reminder",
     "list_reminders",
     "remove_reminder",
+    "ack_recurring_reminder",
     "daily_briefing",
     "update_profile",
     "show_profile",
@@ -75,6 +76,7 @@ VALID_INTENTS = {
     "add_relative_reminder",
     "list_reminders",
     "remove_reminder",
+    "ack_recurring_reminder",
     "daily_briefing",
     "update_profile",
     "show_profile",
@@ -423,7 +425,8 @@ async def parse_intents(
     chat_id: int | None = None,
     user_id: int | None = None,
 ) -> list[Intent]:
-    rule_intents = _rules_resolve(text)
+    normalized_text = normalize_german_input(sanitize_command(text))
+    rule_intents = _rules_resolve(normalized_text)
     if _has_actionable_intent(rule_intents):
         logger.info("Rules parsed %d intent(s) for %r", len(rule_intents), text)
         return rule_intents
@@ -434,7 +437,7 @@ async def parse_intents(
 
     if settings.openrouter_api_key:
         try:
-            safe_text, _ = redact_for_llm(text, settings)
+            safe_text, _ = redact_for_llm(normalized_text, settings)
             memory_context = ""
             if db_path is not None:
                 memory_context = build_openrouter_context(
@@ -599,6 +602,20 @@ def _parse_add_recipe_intents(normalized: str) -> list[Intent] | None:
     ]
 
 
+def _parse_ack_recurring_intents(normalized: str) -> list[Intent] | None:
+    patterns = (
+        r"^(?:i(?:'ve| have)?\s+)?(?:done with|finished with|completed|did|took care of)\s+(?:the\s+)?(.+?)(?:\s+reminder)?$",
+        r"^(?:i(?:'ve| have)?\s+)?finished\s+(?:the\s+)?(.+?)(?:\s+reminder)?$",
+    )
+    for pattern in patterns:
+        match = re.match(pattern, normalized)
+        if match:
+            item = _normalize_item(match.group(1))
+            if item and item not in {"the list", "list", "shopping list", "todo list"}:
+                return [Intent(name="ack_recurring_reminder", item=item)]
+    return None
+
+
 def _parse_meal_suggest_intents(normalized: str) -> list[Intent] | None:
     if re.search(
         r"(?:what should (?:we|i) (?:cook|make|eat)|"
@@ -709,6 +726,10 @@ def _parse_clause_intents(normalized: str) -> list[Intent]:
     )
     if remove_reminder_alt:
         return [Intent(name="remove_reminder", item=_normalize_item(remove_reminder_alt.group(1)))]
+
+    ack = _parse_ack_recurring_intents(normalized)
+    if ack:
+        return ack
 
     if re.search(
         r"plan meals?(?: for)?(?: this| the)? week|weekly meal plan|plan dinners?(?: for)?(?: this| the)? week",
@@ -877,7 +898,7 @@ def _parse_clause_intents(normalized: str) -> list[Intent]:
 
 
 def _parse_with_rules(text: str) -> list[Intent]:
-    cleaned = sanitize_command(text)
+    cleaned = text
 
     structured = try_parse_structured_add(cleaned)
     if structured:

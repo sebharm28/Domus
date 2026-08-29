@@ -54,6 +54,7 @@ from domus.food_db import (
     delete_recipe,
 )
 from domus.meals import handle_plan_meal
+from domus.reminder_views import chat_history_payload, reminders_payload
 from domus.router import route_message
 from domus.todos import _add_or_merge_todo
 
@@ -82,6 +83,8 @@ __all__ = [
     "get_profile",
     "list_completion_stats",
     "settings_payload",
+    "reminders_payload",
+    "chat_history_payload",
     "route_message",
 ]
 

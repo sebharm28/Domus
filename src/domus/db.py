@@ -1210,6 +1210,33 @@ def remove_reminder(db_path: Path, item_text: str) -> Reminder | None:
     return _row_to_reminder(match)
 
 
+def remove_reminder_by_id(db_path: Path, reminder_id: int) -> Reminder | None:
+    with connect(db_path) as conn:
+        row = conn.execute("SELECT * FROM reminders WHERE id = ?", (reminder_id,)).fetchone()
+        if row is None:
+            return None
+        conn.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
+    return _row_to_reminder(row)
+
+
+def get_reminder_by_id(db_path: Path, reminder_id: int) -> Reminder | None:
+    with connect(db_path) as conn:
+        row = conn.execute("SELECT * FROM reminders WHERE id = ?", (reminder_id,)).fetchone()
+    return _row_to_reminder(row) if row else None
+
+
+def cancel_one_shot_by_id(db_path: Path, reminder_id: int) -> OneShotReminder | None:
+    with connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT * FROM one_shot_reminders WHERE id = ? AND sent = 0",
+            (reminder_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        conn.execute("DELETE FROM one_shot_reminders WHERE id = ?", (reminder_id,))
+    return _row_to_one_shot(row)
+
+
 def resolve_user_id_by_name(
     db_path: Path,
     name: str,
@@ -1269,6 +1296,40 @@ def list_recent_turns(
             WHERE chat_id = ?
             ORDER BY id DESC
             LIMIT ?
+            """,
+            (chat_id, limit),
+        ).fetchall()
+    return [
+        ConversationTurn(
+            id=row["id"],
+            chat_id=row["chat_id"],
+            user_id=row["user_id"],
+            role=row["role"],
+            text=row["text"],
+            intent_json=row["intent_json"],
+            created_at=row["created_at"],
+        )
+        for row in rows
+    ]
+
+
+def list_conversation_turns(
+    db_path: Path,
+    *,
+    chat_id: int,
+    limit: int = 50,
+) -> list[ConversationTurn]:
+    """Return the latest turns for a chat in chronological order."""
+    with connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM (
+                SELECT * FROM conversation_turns
+                WHERE chat_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+            ) AS recent
+            ORDER BY id ASC
             """,
             (chat_id, limit),
         ).fetchall()

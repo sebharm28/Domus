@@ -11,6 +11,7 @@ const pageTitle = document.getElementById("page-title");
 const themeToggle = document.getElementById("theme-toggle");
 const themeIcon = themeToggle.querySelector(".theme-icon");
 const tabbar = document.getElementById("tabbar");
+const kitchenBack = document.getElementById("kitchen-back");
 const addShoppingForm = document.getElementById("add-shopping");
 const shoppingInput = document.getElementById("shopping-input");
 const addTaskForm = document.getElementById("add-task");
@@ -23,6 +24,7 @@ const modalEl = document.getElementById("modal");
 const profilesEl = document.getElementById("profiles");
 const statsEl = document.getElementById("stats");
 const settingsEl = document.getElementById("settings");
+const remindersEl = document.getElementById("reminders");
 
 const USER_ID = 1;
 const DISPLAY_NAME = localStorage.getItem("domus-display-name") || "You";
@@ -34,6 +36,8 @@ const state = {
   profiles: [],
   settings: null,
   stats: [],
+  reminders: { recurring: [], pending_timers: [], recent_timers: [] },
+  chatLoaded: false,
   activeTag: null,
   recipesLoaded: false,
   householdLoaded: false,
@@ -92,6 +96,186 @@ window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (e)
 });
 
 // ---- tab navigation -------------------------------------------------------
+const TAB_PARENT = {
+  recipes: "kitchen",
+  "kitchen-timer": "kitchen",
+  "bath-timer": "bath",
+  "bath-brush": "bath",
+};
+
+const RING_RADIUS = 88;
+const RING_CIRC = 2 * Math.PI * RING_RADIUS;
+
+function tabForView(name) {
+  return TAB_PARENT[name] || name;
+}
+
+function formatTimerTime(totalSeconds) {
+  const secs = Math.max(0, Math.ceil(totalSeconds));
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+function playTimerDone() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    [0, 0.35, 0.7].forEach((delay) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.frequency.value = delay === 0.7 ? 880 : 660;
+      gain.gain.value = 0.08;
+      osc.start(ctx.currentTime + delay);
+      osc.stop(ctx.currentTime + delay + 0.22);
+    });
+  } catch (_) {
+    /* audio optional */
+  }
+  if (navigator.vibrate) navigator.vibrate([180, 80, 180]);
+}
+
+function initCountdownTimer(root) {
+  const progress = root.querySelector(".timer-progress");
+  const timeEl = root.querySelector(".timer-time");
+  const labelEl = root.querySelector(".timer-label");
+  const startBtn = root.querySelector(".timer-start");
+  const pauseBtn = root.querySelector(".timer-pause");
+  const resetBtn = root.querySelector(".timer-reset");
+  const presetBtns = root.querySelectorAll(".timer-preset");
+  const doneLabel = root.dataset.doneLabel || "Time is up!";
+
+  progress.style.strokeDasharray = String(RING_CIRC);
+  progress.style.strokeDashoffset = "0";
+
+  let totalSeconds = 0;
+  let remainingSeconds = 0;
+  let endAt = null;
+  let pausedRemaining = 0;
+  let running = false;
+  let label = "Pick a preset";
+  let tickId = null;
+  let done = false;
+
+  function syncRing() {
+    const ratio = totalSeconds > 0 ? remainingSeconds / totalSeconds : 0;
+    progress.style.strokeDashoffset = String(RING_CIRC * (1 - ratio));
+    timeEl.textContent = formatTimerTime(remainingSeconds);
+    labelEl.textContent = done ? doneLabel : label;
+    root.classList.toggle("is-running", running);
+    root.classList.toggle("is-done", done);
+  }
+
+  function setIdle() {
+    running = false;
+    done = false;
+    endAt = null;
+    pausedRemaining = 0;
+    if (tickId) {
+      clearInterval(tickId);
+      tickId = null;
+    }
+    startBtn.textContent = "Start";
+    pauseBtn.disabled = true;
+    resetBtn.disabled = totalSeconds === 0;
+    syncRing();
+  }
+
+  function finish() {
+    running = false;
+    done = true;
+    remainingSeconds = 0;
+    endAt = null;
+    if (tickId) {
+      clearInterval(tickId);
+      tickId = null;
+    }
+    startBtn.textContent = "Start";
+    pauseBtn.disabled = true;
+    resetBtn.disabled = false;
+    syncRing();
+    playTimerDone();
+    toast(doneLabel);
+  }
+
+  function tick() {
+    if (!running || endAt === null) return;
+    remainingSeconds = Math.max(0, (endAt - Date.now()) / 1000);
+    if (remainingSeconds <= 0) {
+      finish();
+      return;
+    }
+    syncRing();
+  }
+
+  function selectPreset(btn) {
+    presetBtns.forEach((b) => b.classList.toggle("is-active", b === btn));
+    totalSeconds = Number(btn.dataset.secs);
+    remainingSeconds = totalSeconds;
+    label = btn.dataset.label || "Timer";
+    done = false;
+    running = false;
+    endAt = null;
+    pausedRemaining = 0;
+    if (tickId) {
+      clearInterval(tickId);
+      tickId = null;
+    }
+    startBtn.textContent = "Start";
+    pauseBtn.disabled = true;
+    resetBtn.disabled = false;
+    syncRing();
+  }
+
+  presetBtns.forEach((btn) => {
+    btn.addEventListener("click", () => selectPreset(btn));
+  });
+
+  const activePreset = root.querySelector(".timer-preset.is-active");
+  if (activePreset) selectPreset(activePreset);
+
+  startBtn.addEventListener("click", () => {
+    if (done) {
+      done = false;
+      remainingSeconds = totalSeconds;
+    }
+    if (totalSeconds <= 0) {
+      toast("Pick a preset first.");
+      return;
+    }
+    if (running) return;
+    running = true;
+    endAt = Date.now() + (pausedRemaining || remainingSeconds) * 1000;
+    pausedRemaining = 0;
+    startBtn.textContent = "Running…";
+    pauseBtn.disabled = false;
+    resetBtn.disabled = false;
+    if (!tickId) tickId = setInterval(tick, 200);
+    tick();
+  });
+
+  pauseBtn.addEventListener("click", () => {
+    if (!running) return;
+    running = false;
+    pausedRemaining = Math.max(0, (endAt - Date.now()) / 1000);
+    remainingSeconds = pausedRemaining;
+    endAt = null;
+    startBtn.textContent = "Resume";
+    pauseBtn.disabled = true;
+    syncRing();
+  });
+
+  resetBtn.addEventListener("click", () => {
+    remainingSeconds = totalSeconds;
+    setIdle();
+  });
+
+  return { reset: setIdle };
+}
+
+const countdownTimers = new Map();
+
 function switchView(name) {
   document.querySelectorAll(".view").forEach((v) => v.classList.remove("is-active"));
   const view = document.getElementById(`view-${name}`);
@@ -99,12 +283,29 @@ function switchView(name) {
     view.classList.add("is-active");
     pageTitle.textContent = view.dataset.title || "Domus";
   }
+  const tabName = tabForView(name);
   tabbar.querySelectorAll(".tab").forEach((t) =>
-    t.classList.toggle("is-active", t.dataset.view === name)
+    t.classList.toggle("is-active", t.dataset.view === tabName)
   );
   if (name === "recipes" && !state.recipesLoaded) loadRecipes();
   if (name === "household" && !state.householdLoaded) loadHousehold();
 }
+
+document.querySelectorAll(".kitchen-app[data-go]").forEach((tile) => {
+  tile.addEventListener("click", () => switchView(tile.dataset.go));
+});
+
+document.querySelectorAll(".hub-back").forEach((btn) => {
+  btn.addEventListener("click", () => switchView(btn.dataset.back));
+});
+
+if (kitchenBack) {
+  kitchenBack.addEventListener("click", () => switchView("kitchen"));
+}
+
+document.querySelectorAll(".timer-app").forEach((root) => {
+  countdownTimers.set(root.id, initCountdownTimer(root));
+});
 
 tabbar.querySelectorAll(".tab").forEach((tab) => {
   tab.addEventListener("click", () => switchView(tab.dataset.view));
@@ -121,18 +322,50 @@ async function api(path, body) {
 
 async function loadHousehold() {
   try {
-    const [profiles, settings, stats] = await Promise.all([
+    const [profiles, settings, stats, reminders] = await Promise.all([
       api("/api/profiles"),
       api("/api/settings"),
       api("/api/stats"),
+      api("/api/reminders"),
     ]);
     state.profiles = profiles.profiles || [];
     state.settings = settings;
     state.stats = stats.stats || [];
+    applyReminders(reminders);
     state.householdLoaded = true;
     renderHousehold();
     setConnected(true);
   } catch (e) {
+    setConnected(false);
+  }
+}
+
+async function loadChatHistory() {
+  try {
+    const data = await api("/api/chat/history");
+    const turns = data.history || [];
+    messagesEl.innerHTML = "";
+    if (turns.length === 0) {
+      addBubble(
+        "Hi! I'm Domus. Ask me to add items, plan meals, or set reminders — or use the tabs below.",
+        "Domus"
+      );
+    } else {
+      for (const turn of turns) {
+        const who =
+          turn.role === "user" ? turn.display_name || DISPLAY_NAME : "Domus";
+        addBubble(turn.text, who);
+      }
+    }
+    state.chatLoaded = true;
+    setConnected(true);
+  } catch (e) {
+    if (!state.chatLoaded) {
+      addBubble(
+        "Hi! I'm Domus. Ask me to add items, plan meals, or set reminders — or use the tabs below.",
+        "Domus"
+      );
+    }
     setConnected(false);
   }
 }
@@ -271,6 +504,113 @@ function renderHousehold() {
     <p><strong>Redaction:</strong> ${cfg.redaction_enabled ? "on" : "off"}</p>
     <p class="muted section-hint">Configure via .env — QUIET_HOURS_*, REDACTION_*</p>
   `;
+
+  renderReminders();
+}
+
+function applyReminders(data) {
+  if (!data) return;
+  state.reminders = {
+    recurring: data.recurring || [],
+    pending_timers: data.pending_timers || [],
+    recent_timers: data.recent_timers || [],
+  };
+}
+
+function renderReminders() {
+  if (!remindersEl) return;
+  const { recurring, pending_timers, recent_timers } = state.reminders;
+  const sections = [];
+
+  if (recurring?.length) {
+    sections.push(`
+      <h3 class="reminder-heading">Recurring</h3>
+      ${recurring
+        .map(
+          (r) => `
+        <div class="reminder-row${r.is_overdue ? " overdue" : ""}">
+          <div>
+            <strong>${escapeHtml(r.text)}</strong>
+            <span class="muted">${escapeHtml(r.schedule_label)} · next ${escapeHtml(r.next_due_label)}</span>
+          </div>
+          <button class="del" data-action="remove-recurring" data-id="${r.id}" title="Remove">×</button>
+        </div>`
+        )
+        .join("")}
+    `);
+  }
+
+  if (pending_timers?.length) {
+    sections.push(`
+      <h3 class="reminder-heading">Pending timers</h3>
+      ${pending_timers
+        .map(
+          (t) => `
+        <div class="reminder-row">
+          <div>
+            <strong>${escapeHtml(t.text)}</strong>
+            <span class="muted">${escapeHtml(t.fire_at_local)}${t.minutes_until != null ? ` · in ${t.minutes_until} min` : ""}</span>
+          </div>
+          <button class="del" data-action="cancel-timer" data-id="${t.id}" title="Cancel">×</button>
+        </div>`
+        )
+        .join("")}
+    `);
+  }
+
+  if (recent_timers?.length) {
+    sections.push(`
+      <h3 class="reminder-heading">Recent timers</h3>
+      ${recent_timers
+        .map(
+          (t) => `
+        <div class="reminder-row muted">
+          <div>
+            <strong>${escapeHtml(t.text)}</strong>
+            <span class="muted">${escapeHtml(t.fire_at_local)}</span>
+          </div>
+        </div>`
+        )
+        .join("")}
+    `);
+  }
+
+  remindersEl.innerHTML =
+    sections.length > 0
+      ? sections.join("")
+      : `<p class="empty">No reminders yet — try “remind us every Tuesday to take out the trash”.</p>`;
+
+  remindersEl.querySelectorAll("[data-action]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = Number(btn.dataset.id);
+      if (btn.dataset.action === "remove-recurring") removeRecurringReminder(id);
+      if (btn.dataset.action === "cancel-timer") cancelTimer(id);
+    });
+  });
+}
+
+async function removeRecurringReminder(id) {
+  try {
+    const data = await api("/api/reminders/remove", { id });
+    applyReminders(data);
+    renderReminders();
+    if (data.removed) toast(`Removed: ${data.removed}`);
+    setConnected(true);
+  } catch (e) {
+    setConnected(false);
+  }
+}
+
+async function cancelTimer(id) {
+  try {
+    const data = await api("/api/reminders/cancel-timer", { id });
+    applyReminders(data);
+    renderReminders();
+    if (data.cancelled) toast(`Cancelled: ${data.cancelled}`);
+    setConnected(true);
+  } catch (e) {
+    setConnected(false);
+  }
 }
 
 function renderTagFilter() {
@@ -627,6 +967,10 @@ async function sendMessage(text) {
       state.todos = data.todos;
       renderTodos();
     }
+    if (data.reminders) {
+      applyReminders(data.reminders);
+      if (state.householdLoaded) renderReminders();
+    }
     setConnected(true);
   } catch (e) {
     addBubble("I couldn't reach the Domus backend.", "Domus");
@@ -744,6 +1088,6 @@ document.addEventListener("keydown", (e) => {
 });
 
 // ---- boot -----------------------------------------------------------------
-addBubble("Hi! I'm Domus. Ask me to add items, plan meals, or set reminders — or use the tabs below.", "Domus");
 loadTodos();
 loadRecipes();
+loadChatHistory();

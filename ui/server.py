@@ -7,7 +7,9 @@ library so it runs anywhere the core package does. Every frontend talks to the
 same JSON API:
 
     GET  /api/todos              -> { "todos": [...] }
-    POST /api/message            -> { "reply": str, "todos": [...] }
+    GET  /api/reminders          -> { "recurring", "pending_timers", "recent_timers" }
+    GET  /api/chat/history       -> { "history": [...] }
+    POST /api/message            -> { "reply", "todos", "reminders" }
     POST /api/todos/toggle       -> { "todos": [...] }
 
 The static web client in ``ui/web`` is one such frontend; a native SwiftUI or
@@ -43,7 +45,9 @@ from domus.core import (  # noqa: E402  (import after sys.path tweak)
     add_item,
     add_recipe,
     build_settings,
+    chat_history_payload,
     delete_item,
+    delete_recipe,
     get_profile,
     handle_user_message,
     init_storage,
@@ -53,10 +57,10 @@ from domus.core import (  # noqa: E402  (import after sys.path tweak)
     list_recipe_tags,
     list_recipes,
     plan_recipe,
+    reminders_payload,
     set_todo_done,
     settings_payload,
     update_recipe,
-    delete_recipe,
 )
 from domus import db
 from domus.shopping import (  # noqa: E402
@@ -215,6 +219,22 @@ class DomusHandler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/stats"):
             self._send_json({"stats": _stats_payload()})
             return
+        if self.path.startswith("/api/reminders"):
+            self._send_json(
+                reminders_payload(SETTINGS.database_path, chat_id=CHAT_ID)
+            )
+            return
+        if self.path.startswith("/api/chat/history"):
+            self._send_json(
+                {
+                    "history": chat_history_payload(
+                        SETTINGS.database_path,
+                        chat_id=CHAT_ID,
+                        limit=50,
+                    )
+                }
+            )
+            return
         if self.path == "/" or not self.path.startswith("/api"):
             self._serve_static(self.path)
             return
@@ -238,7 +258,15 @@ class DomusHandler(BaseHTTPRequestHandler):
                     display_name=display_name,
                 )
             )
-            self._send_json({"reply": reply, "todos": _todo_payload()})
+            self._send_json(
+                {
+                    "reply": reply,
+                    "todos": _todo_payload(),
+                    "reminders": reminders_payload(
+                        SETTINGS.database_path, chat_id=CHAT_ID
+                    ),
+                }
+            )
             return
 
         if self.path == "/api/todos/toggle":
@@ -369,6 +397,44 @@ class DomusHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "recipe not found"}, status=404)
                 return
             self._send_json({"deleted": deleted, **_recipes_response()})
+            return
+
+        if self.path == "/api/reminders/remove":
+            body = self._read_json()
+            try:
+                reminder_id = int(body.get("id"))
+            except (TypeError, ValueError):
+                self._send_json({"error": "invalid id"}, status=400)
+                return
+            removed = db.remove_reminder_by_id(SETTINGS.database_path, reminder_id)
+            if removed is None:
+                self._send_json({"error": "reminder not found"}, status=404)
+                return
+            self._send_json(
+                {
+                    "removed": removed.text,
+                    **reminders_payload(SETTINGS.database_path, chat_id=CHAT_ID),
+                }
+            )
+            return
+
+        if self.path == "/api/reminders/cancel-timer":
+            body = self._read_json()
+            try:
+                timer_id = int(body.get("id"))
+            except (TypeError, ValueError):
+                self._send_json({"error": "invalid id"}, status=400)
+                return
+            cancelled = db.cancel_one_shot_by_id(SETTINGS.database_path, timer_id)
+            if cancelled is None:
+                self._send_json({"error": "timer not found"}, status=404)
+                return
+            self._send_json(
+                {
+                    "cancelled": cancelled.text,
+                    **reminders_payload(SETTINGS.database_path, chat_id=CHAT_ID),
+                }
+            )
             return
 
         self.send_error(404, "Not found")

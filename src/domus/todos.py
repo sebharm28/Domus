@@ -23,6 +23,7 @@ from domus.meals import (
 )
 from domus.reminders import (
     handle_add_recurring_reminder,
+    handle_ack_recurring_reminder,
     handle_cancel_timer,
     handle_list_reminders,
     handle_remove_reminder,
@@ -376,6 +377,9 @@ def handle_intent(
 
     if intent.name == "remove_reminder":
         return handle_remove_reminder(db_path, intent.item)
+
+    if intent.name == "ack_recurring_reminder":
+        return handle_ack_recurring_reminder(db_path, intent.item)
 
     if intent.name == "log_meal":
         return handle_log_meal(intent.item or "", db_path, created_by)

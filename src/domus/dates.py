@@ -89,6 +89,27 @@ def parse_apartment_hint(text: str) -> tuple[str, str | None]:
 
 
 def parse_assignee_hint(text: str) -> tuple[str, str | None]:
+    give_match = re.search(
+        r"\bgive\s+(.+?)\s+to\s+(me|myself|mine|[a-z][a-z0-9 _-]{1,30})\b",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if give_match:
+        item = give_match.group(1).strip(" ,:-")
+        assignee = give_match.group(2).strip()
+        cleaned = (text[: give_match.start()] + text[give_match.end() :]).strip(" ,:-")
+        if cleaned:
+            return f"{cleaned} {item}".strip(), assignee
+        return item, assignee
+
+    possessive = re.search(
+        r"\b([a-z][a-z0-9 _-]{1,30})(?:'s|s)\s+task\s*:\s*(.+)$",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if possessive:
+        return possessive.group(2).strip(" ,:-"), possessive.group(1).strip()
+
     patterns = (
         r"\b(?:assign(?:ed)?(?: to)?|for)\s+(me|myself|mine|[a-z][a-z0-9 _-]{1,30})\b",
         r"\bfor\s+([a-z][a-z0-9 _-]{1,30})\s+to\s+(?:do|handle|take care of)\b",

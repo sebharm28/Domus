@@ -1042,7 +1042,250 @@ body {
   color: #fff;
 }
 
-/* ---------- KITCHEN (work in progress) ---------- */
+/* ---------- KITCHEN HUB ---------- */
+.kitchen-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink-soft);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.kitchen-back:hover {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+.kitchen-hub {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  margin-bottom: 8px;
+}
+
+.kitchen-app {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  min-height: 168px;
+  padding: 18px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  text-align: left;
+  transition: transform 0.12s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+button.kitchen-app {
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  width: 100%;
+}
+
+.kitchen-app.is-live:hover {
+  transform: translateY(-2px);
+  border-color: var(--accent);
+  box-shadow: var(--glass-shadow);
+}
+
+.kitchen-app.is-soon {
+  opacity: 0.72;
+  background: var(--surface-2);
+  border-style: dashed;
+}
+
+.kitchen-app-icon {
+  font-size: 36px;
+  line-height: 1;
+}
+
+.kitchen-app h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  color: var(--ink);
+}
+
+.kitchen-app p {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  color: var(--ink-soft);
+}
+
+.soon-badge {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.kitchen-clock {
+  width: 72px;
+  height: 72px;
+  margin-bottom: 2px;
+}
+
+/* ---------- COUNTDOWN TIMERS ---------- */
+.timer-app {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  padding: 8px 0 24px;
+}
+
+.timer-clock {
+  position: relative;
+  width: min(280px, 72vw);
+  height: min(280px, 72vw);
+}
+
+.timer-ring-svg {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.timer-track {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 8;
+}
+
+.timer-progress {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 8;
+  stroke-linecap: round;
+  transition: stroke 0.25s ease;
+}
+
+.timer-app.is-done .timer-progress {
+  stroke: #3d9a5f;
+}
+
+.timer-readout {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  text-align: center;
+  pointer-events: none;
+}
+
+.timer-time {
+  font-size: clamp(2.4rem, 9vw, 3.2rem);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  line-height: 1;
+}
+
+.timer-label {
+  font-size: 0.92rem;
+  color: var(--ink-soft);
+  max-width: 12rem;
+}
+
+.timer-presets {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 420px;
+}
+
+.timer-preset {
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink-soft);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.timer-preset:hover {
+  border-color: var(--accent);
+  color: var(--ink);
+}
+
+.timer-preset.is-active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  color: var(--ink);
+}
+
+.timer-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+
+.timer-controls .btn {
+  min-width: 96px;
+}
+
+.timer-controls .timer-pause:disabled,
+.timer-controls .timer-reset:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.clock-face {
+  width: 100%;
+  height: 100%;
+}
+
+.clock-ring {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 2;
+}
+
+.clock-hand {
+  stroke: var(--ink);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+
+.clock-hand.minute {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.clock-center {
+  fill: var(--accent);
+}
+
+/* legacy single-panel WIP (kept for reuse) */
 .wip {
   flex: 1;
   display: flex;
@@ -1079,6 +1322,59 @@ body {
 .household-grid {
   display: grid;
   gap: 16px;
+}
+
+@media (min-width: 720px) {
+  .household-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .household-grid .panel-wide {
+    grid-column: 1 / -1;
+  }
+}
+
+.reminders-list {
+  display: grid;
+  gap: 8px;
+}
+
+.reminder-heading {
+  margin: 12px 0 6px;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+}
+
+.reminder-heading:first-child {
+  margin-top: 0;
+}
+
+.reminder-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--surface-2, rgba(255, 255, 255, 0.04));
+}
+
+.reminder-row.overdue {
+  border-left: 3px solid var(--accent);
+}
+
+.reminder-row .del {
+  flex-shrink: 0;
+}
+
+.reminder-row strong {
+  display: block;
+  font-size: 0.95rem;
+}
+
+.panel-wide {
+  grid-column: 1 / -1;
 }
 
 .panel {
@@ -1147,7 +1443,7 @@ body {
   transform: translateX(-50%);
   width: min(680px, calc(100% - 32px));
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(6, 1fr);
   gap: 4px;
   padding: 8px;
   border-radius: 22px;
@@ -1199,5 +1495,13 @@ body {
   }
   .summary {
     grid-template-columns: repeat(3, 1fr);
+  }
+  .tab {
+    font-size: 9px;
+    padding: 8px 2px;
+  }
+  .tab svg {
+    width: 21px;
+    height: 21px;
   }
 }

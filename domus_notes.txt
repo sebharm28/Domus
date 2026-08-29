@@ -397,15 +397,9 @@ Current state
 
 Recommended approach (when we pick it up)
 -----------------------------------------
-  Phase A — Understand German input (keep English replies)
-    - Duplicate critical regex/intent paths for German equivalents, e.g.:
-        "füge Milch zur Liste hinzu" / "wir brauchen Butter"
-        "was steht heute an?" / "was fehlt zum Abendessen?"
-        "erinnere uns jeden Dienstag an die Mülltonne"
-    - Extend OpenRouter SYSTEM_PROMPT with German few-shot examples.
-    - Add German test fixtures alongside English in tests/test_intents.py.
-    - Optional: detect language per message (simple keyword/heuristic) and
-      route to a German rule set without mixing languages in one regex.
+  Phase A — Understand German input (keep English replies) — PARTIAL (Aug 2026)
+    - normalize_german_input() maps common DE phrases → EN before rules
+    - More patterns + German replies (Phase B) still open
 
   Phase B — German replies
     - Extract user-facing strings into a small i18n layer (en/de JSON or
@@ -685,7 +679,7 @@ Implement these next, in rough priority order:
 
 Reminders & housekeeping
   [x] 6. QUIET HOURS — no pushes 22:00–07:00; batch into morning briefing (.env)
-  [ ] 12. DONE WITH RECURRING TASK ACK — log when trash/etc. is marked done
+  [x] 12. DONE WITH RECURRING TASK ACK — "done with trash" advances next due
   [ ] 13. DATABASE BACKUP ON SCHEDULE — daily copy of data/domus.db → data/backups/
 
 
@@ -707,6 +701,25 @@ Platform / privacy
   [ ] OpenRouter JSON repair (second LLM call — TBD)
   [x] Long-term conversation brain (Phase 2 — beyond last_todo_id)
   [x] Merge UI branch scaffold — read-only dashboard for lists, meals, profile
+
+
+NLP polish (Aug 2026 end-of-month)
+  [x] German Phase A — normalize common DE phrases to EN before rules
+  [x] More assignee phrasing — "give X to Y", "Sebastian's task: …"
+  [x] Golden tests — tests/test_nlp_polish.py
+
+
+Domus UI (Aug 2026)
+  [x] Household tab — profiles, stats, settings
+  [x] Reminders panel — recurring + pending timers (API + chat)
+  [x] NLP wired to UI — POST /api/message → handle_user_message → SQLite
+  [x] Chat history — conversation_turns in SQLite, GET /api/chat/history
+  [x] Kitchen hub — recipe book, egg timer (6 / 7 / 10 min presets)
+  [x] Bath hub — shower timer (5 / 10 / 15 min), toothbrush timer (2 min)
+  [ ] Kitchen unit converter, scratch notes (placeholders in UI)
+  [ ] Bath cleaning checklist, towel laundry, medicine cabinet (placeholders)
+  [ ] Recipe edit via chat (deferred)
+  [ ] Native mobile / macOS app (future)
 
 
 Voice (deferred)
@@ -784,11 +797,12 @@ cancel_timer, undo, snooze_reminder,
 suggest_meal, log_meal, plan_meal, plan_week, show_meal_plan,
 missing_ingredients,
 add_recurring_reminder, add_relative_reminder, list_reminders, remove_reminder,
+ack_recurring_reminder,
 add_recipe, who_did_what,
 daily_briefing,
 help, greeting, thanks
 
 
-Last updated: 26 August 2026 (wave 5: snooze, undo expanded; NEXT STEP backlog)
+Last updated: 26 August 2026 (Kitchen + Bath hubs, countdown timers)
 Branch: cursor/todo-list-openrouter-sqlite
 Related: app_discussion.txt, log_discussion.md
