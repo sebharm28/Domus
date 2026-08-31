@@ -54,6 +54,68 @@ DEFAULT_FOODS: list[tuple[str, str, list[str], int, str]] = [
 ]
 
 
+MEAL_PLAN_KEEP_WEEKS = 6
+
+
+def _migrate_meal_plans_apartment(conn: sqlite3.Connection) -> None:
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(meal_plans)")}
+    if "apartment" in columns:
+        return
+    conn.executescript(
+        """
+        CREATE TABLE meal_plans_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            apartment TEXT NOT NULL DEFAULT '',
+            day TEXT NOT NULL,
+            dish TEXT NOT NULL,
+            food_id INTEGER,
+            ingredients TEXT NOT NULL DEFAULT '[]',
+            UNIQUE(apartment, day),
+            FOREIGN KEY (food_id) REFERENCES foods(id)
+        );
+        INSERT INTO meal_plans_new (id, apartment, day, dish, food_id, ingredients)
+        SELECT id, '', day, dish, food_id, ingredients FROM meal_plans;
+        DROP TABLE meal_plans;
+        ALTER TABLE meal_plans_new RENAME TO meal_plans;
+        """
+    )
+    apt = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='apartments'"
+    ).fetchone()
+    if apt:
+        row = conn.execute("SELECT label FROM apartments LIMIT 1").fetchone()
+        if row:
+            conn.execute(
+                "UPDATE meal_plans SET apartment = ? WHERE apartment = ''",
+                (row["label"],),
+            )
+
+
+def _meal_scope(apartment: str | None) -> str:
+    if not apartment:
+        return ""
+    return apartment.strip()
+
+
+def prune_old_meal_plans(
+    db_path: Path,
+    apartment: str | None,
+    *,
+    keep_weeks: int = MEAL_PLAN_KEEP_WEEKS,
+) -> int:
+    """Delete meal plans older than keep_weeks (Mon-based). Returns rows removed."""
+    from domus.meal_plan_views import calendar_week_bounds
+
+    scope = _meal_scope(apartment)
+    cutoff, _ = calendar_week_bounds(-keep_weeks)
+    with connect(db_path) as conn:
+        cursor = conn.execute(
+            "DELETE FROM meal_plans WHERE apartment = ? AND day < ?",
+            (scope, cutoff.isoformat()),
+        )
+        return cursor.rowcount
+
+
 def init_food_tables(db_path: Path) -> None:
     with connect(db_path) as conn:
         conn.executescript(
@@ -86,6 +148,7 @@ def init_food_tables(db_path: Path) -> None:
             """
         )
         _migrate_foods(conn)
+        _migrate_meal_plans_apartment(conn)
         count = conn.execute("SELECT COUNT(*) AS c FROM foods").fetchone()["c"]
         if count == 0:
             for name, meal_type, ingredients, prep_time, notes in DEFAULT_FOODS:
@@ -468,45 +531,127 @@ def _row_to_meal_plan(row: sqlite3.Row) -> MealPlanEntry:
     )
 
 
-def clear_meal_plan_range(db_path: Path, start_day: str, end_day: str) -> None:
-    with connect(db_path) as conn:
-        conn.execute(
-            "DELETE FROM meal_plans WHERE day >= ? AND day <= ?",
-            (start_day, end_day),
-        )
-
-
-def save_meal_plan_entry(db_path: Path, day: str, food: Food) -> MealPlanEntry:
+def clear_meal_plan_range(
+    db_path: Path,
+    start_day: str,
+    end_day: str,
+    *,
+    apartment: str | None = None,
+) -> None:
+    scope = _meal_scope(apartment)
     with connect(db_path) as conn:
         conn.execute(
             """
-            INSERT INTO meal_plans (day, dish, food_id, ingredients)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(day) DO UPDATE SET
+            DELETE FROM meal_plans
+            WHERE apartment = ? AND day >= ? AND day <= ?
+            """,
+            (scope, start_day, end_day),
+        )
+
+
+def save_meal_plan_entry(
+    db_path: Path,
+    day: str,
+    food: Food,
+    *,
+    apartment: str | None = None,
+) -> MealPlanEntry:
+    scope = _meal_scope(apartment)
+    with connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO meal_plans (apartment, day, dish, food_id, ingredients)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(apartment, day) DO UPDATE SET
                 dish = excluded.dish,
                 food_id = excluded.food_id,
                 ingredients = excluded.ingredients
             """,
-            (day, food.name, food.id, json.dumps(food.ingredients)),
+            (scope, day, food.name, food.id, json.dumps(food.ingredients)),
         )
-        row = conn.execute("SELECT * FROM meal_plans WHERE day = ?", (day,)).fetchone()
+        row = conn.execute(
+            "SELECT * FROM meal_plans WHERE apartment = ? AND day = ?",
+            (scope, day),
+        ).fetchone()
     return _row_to_meal_plan(row)
 
 
-def get_meal_plan_range(db_path: Path, start_day: str, end_day: str) -> list[MealPlanEntry]:
+def get_meal_plan_range(
+    db_path: Path,
+    start_day: str,
+    end_day: str,
+    *,
+    apartment: str | None = None,
+) -> list[MealPlanEntry]:
+    scope = _meal_scope(apartment)
     with connect(db_path) as conn:
         rows = conn.execute(
             """
             SELECT * FROM meal_plans
-            WHERE day >= ? AND day <= ?
+            WHERE apartment = ? AND day >= ? AND day <= ?
             ORDER BY day ASC
             """,
-            (start_day, end_day),
+            (scope, start_day, end_day),
         ).fetchall()
     return [_row_to_meal_plan(row) for row in rows]
 
 
-def get_meal_plan_for_day(db_path: Path, day: str) -> MealPlanEntry | None:
+def get_meal_plan_for_day(
+    db_path: Path,
+    day: str,
+    *,
+    apartment: str | None = None,
+) -> MealPlanEntry | None:
+    scope = _meal_scope(apartment)
     with connect(db_path) as conn:
-        row = conn.execute("SELECT * FROM meal_plans WHERE day = ?", (day,)).fetchone()
+        row = conn.execute(
+            "SELECT * FROM meal_plans WHERE apartment = ? AND day = ?",
+            (scope, day),
+        ).fetchone()
     return _row_to_meal_plan(row) if row else None
+
+
+def save_meal_plan_dish(
+    db_path: Path,
+    day: str,
+    dish: str,
+    *,
+    food_id: int | None = None,
+    ingredients: list[str] | None = None,
+    apartment: str | None = None,
+) -> MealPlanEntry:
+    """Save a meal plan row by dish name (recipe-linked or free-text suggestion)."""
+    scope = _meal_scope(apartment)
+    ing_json = json.dumps(ingredients or [])
+    with connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO meal_plans (apartment, day, dish, food_id, ingredients)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(apartment, day) DO UPDATE SET
+                dish = excluded.dish,
+                food_id = excluded.food_id,
+                ingredients = excluded.ingredients
+            """,
+            (scope, day, dish.strip(), food_id, ing_json),
+        )
+        row = conn.execute(
+            "SELECT * FROM meal_plans WHERE apartment = ? AND day = ?",
+            (scope, day),
+        ).fetchone()
+    return _row_to_meal_plan(row)
+
+
+def delete_meal_plan_day(
+    db_path: Path,
+    day: str,
+    *,
+    apartment: str | None = None,
+) -> bool:
+    scope = _meal_scope(apartment)
+    with connect(db_path) as conn:
+        cursor = conn.execute(
+            "DELETE FROM meal_plans WHERE apartment = ? AND day = ?",
+            (scope, day),
+        )
+        return cursor.rowcount > 0

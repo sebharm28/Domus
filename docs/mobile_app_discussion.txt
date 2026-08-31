@@ -1,0 +1,398 @@
+DOMUS — MOBILE & DESKTOP APP STRATEGY
+=====================================
+Discussion and roadmap for getting Domus onto macOS, Android, and iOS
+**without publishing to the App Store or Play Store** — self-hosted Domus for your
+household, friends, or anyone you invite to your instance.
+
+Related: ui/README.md, docs/app_discussion.txt, docs/domus_notes.txt
+Last updated: 30 August 2026
+
+Audience: any household (or group of friends) running their own Domus instance —
+not tied to a fixed number of users. Scale by adding profiles, households, and
+server capacity as needed.
+
+
+WHAT YOU WANT (AND DON'T WANT)
+------------------------------
+WANT:
+  - Use Domus on phone while shopping, in the kitchen, on the couch
+  - Same shared lists, recipes, reminders, and chat memory for both of you
+  - A proper macOS app (optional but nice on your Mac)
+  - Private — no public listing, no strangers, no product launch
+
+DON'T WANT (for now):
+  - App Store / Play Store submission and review
+  - Running a public cloud service with accounts and billing
+  - Rewriting the whole brain in Swift/Kotlin from scratch
+
+Good news: the codebase is already shaped for this. The brain lives in
+``src/domus/core.py``; the web UI talks to it over JSON via ``ui/server.py``.
+Telegram is just another frontend. Native apps do not need to reimplement NLP.
+
+
+THE REAL PROBLEM TO SOLVE
+-------------------------
+Domus today is **local-first**:
+
+  - SQLite database on one machine (``data/domus_ui.db`` or ``data/domus.db``)
+  - ``ui/server.py`` binds to ``127.0.0.1:8765`` by default
+  - Your phones cannot reach your Mac's localhost when you are at the store
+
+So "make it mobile" is really three questions:
+
+  1. **Where does the brain run 24/7?** (one always-on household server)
+  2. **How do phones reach it safely?** (private network, not the open internet)
+  3. **What do you install on each device?** (web shell vs native wrapper)
+
+Everything below assumes **one shared server + two clients** unless you
+explicitly choose offline/sync later (much harder — defer).
+
+
+RECOMMENDED ARCHITECTURE (TWO-PERSON HOUSEHOLD)
+-----------------------------------------------
+
+                    ┌─────────────────────────────────┐
+                    │   Household server (always on)   │
+                    │   Mac mini / Pi / your Mac       │
+                    │                                  │
+                    │   domus.core + SQLite            │
+                    │   ui/server.py  :8765            │
+                    │   telegram bot (optional alerts) │
+                    └───────────────┬─────────────────┘
+                                    │
+                         Tailscale / home LAN
+                    (private — no public ports)
+                                    │
+          ┌─────────────────────────┼─────────────────────────┐
+          │                         │                         │
+    iPhone (Safari PWA        Android (Chrome PWA      macOS (Tauri .app
+     or Capacitor shell)       or Capacitor shell)      or Safari PWA)
+          │                         │                         │
+          └─────────────────────────┴─────────────────────────┘
+                          same JSON API (/api/...)
+
+Why this fits you:
+  - **One database** — no sync conflicts between you and your girlfriend
+  - **No app store** — PWAs and sideloaded APKs / TestFlight-style installs
+  - **Reuse ui/web** — Kitchen, Bath, timers, recipes already built
+  - **Telegram stays useful** — push notifications and NLP testing until you
+    add native push later
+
+
+OPTION COMPARISON (macOS · Android · iOS)
+-----------------------------------------
+
+┌──────────────────┬───────────────┬────────────────┬─────────────────────────┐
+│ Approach         │ macOS         │ Android        │ iOS                     │
+├──────────────────┼───────────────┼────────────────┼─────────────────────────┤
+│ A. PWA           │ Safari pin    │ Add to Home    │ Add to Home Screen      │
+│ (fastest)        │ or Chrome     │ Screen         │ (Safari only)           │
+│                  │               │                │                         │
+│ B. Web wrapper   │ Tauri ★       │ Capacitor ★    │ Capacitor ★             │
+│ (one UI codebase)│ native .app   │ sideload APK   │ AltStore / TestFlight   │
+│                  │               │                │                         │
+│ C. Native rewrite│ SwiftUI       │ Kotlin/Compose │ SwiftUI                 │
+│ (most work)      │               │                │                         │
+│ D. Cross-native  │ —             │ React Native   │ React Native            │
+│                  │               │ Expo           │ Expo                    │
+└──────────────────┴───────────────┴────────────────┴─────────────────────────┘
+
+★ = recommended for Domus given current ui/web investment
+
+
+PHASE 0 — HOUSEHOLD SERVER (DO THIS FIRST)
+------------------------------------------
+Before any "app store" thinking, pick **one machine** that stays on:
+
+  Candidates:
+    - Mac mini at home (simplest for you — same ecosystem as dev)
+    - Raspberry Pi (cheap, low power; run Python + ui/server.py)
+    - Your Mac when home (works for testing; less ideal 24/7)
+
+  On that machine:
+    1. Clone Domus, ``source .venv/bin/activate``
+    2. Run UI server bound to LAN (not only localhost):
+
+         PYTHONPATH=src python ui/server.py --host 0.0.0.0 --port 8765
+
+    3. Point ``DOMUS_UI_DB`` at the **one** shared DB both of you use
+    4. (Optional) Run Telegram bot on the same box for reminders push
+
+  Security note: ``0.0.0.0`` exposes the API on your home network. That is
+  fine **only** together with Tailscale or a firewall — never port-forward
+  8765 to the public internet without auth.
+
+
+PHASE 1 — PRIVATE ACCESS FROM PHONES (TAILSCALE)
+------------------------------------------------
+**Tailscale** (or WireGuard, ZeroTier) is the easiest way for two people to
+reach a home server without publishing anything.
+
+  - Free for personal use
+  - Each phone + Mac gets a private ``100.x`` address
+  - Traffic is encrypted; no router port forwarding
+  - Girlfriend installs Tailscale → opens ``http://100.x.x.x:8765`` in browser
+
+  Optional polish:
+    - MagicDNS: ``http://domus-server:8765`` instead of an IP
+    - Split DNS / exit node only if you need it (usually you don't)
+
+  Alternative if you are always on the same Wi‑Fi at home:
+    - Use the server's local IP (``http://192.168.x.x:8765``)
+    - Zero setup, but **does not work at the supermarket**
+
+  Recommendation: **Tailscale + Phase 2 PWA** = mobile Domus in an afternoon.
+
+
+PHASE 2 — PWA (FASTEST "APP" ON ALL THREE PLATFORMS)
+----------------------------------------------------
+A **Progressive Web App** is your existing ``ui/web`` with a manifest + icons.
+Users "Add to Home Screen" — looks and feels like an app, no store.
+
+  What to add (small ui/web change):
+    - ``manifest.json`` (name, icons, theme colour, ``display: standalone``)
+    - ``<link rel="manifest">`` + apple-touch-icon meta tags in index.html
+    - Service worker (optional v1: skip; v2: offline shell for static assets)
+
+  Platform behaviour:
+    - **Android Chrome**: excellent — full-screen, icon on launcher
+    - **iOS Safari**: good — standalone mode, no Safari chrome; some limits
+      (no real background push without extra work; timers work in foreground)
+    - **macOS Safari**: "Add to Dock" from Safari 17+ or pin tab
+
+  Pros:
+    - One codebase (what you have now)
+    - No Apple/Google developer accounts required for basic use
+    - Updates = refresh / redeploy server static files
+
+  Cons:
+    - iOS PWAs cannot receive silent push like native apps
+    - Must be online to reach household server (expected for your design)
+    - Feels 95% native, not 100% (no App Store presence — which you want)
+
+  Verdict: **Best first mobile deliverable.** Do this before Capacitor/Tauri.
+
+
+PHASE 3 — macOS DESKTOP APP (TAURI)
+-----------------------------------
+Wrap ``ui/web`` in **Tauri 2** — small native shell, WebView inside, menu bar
+optional.
+
+  Flow:
+    - Tauri app loads ``http://127.0.0.1:8765`` locally OR embeds static files
+      and talks to a bundled/local server process
+    - Two modes:
+        (a) **Thin client**: app opens your Tailscale URL (same as phone)
+        (b) **Thick client**: app spawns ``ui/server.py`` as a sidecar on Mac
+
+  Distribution (private, no Mac App Store):
+    - Build ``.app`` on your Mac
+    - AirDrop / iCloud / shared folder to girlfriend's Mac
+    - Gatekeeper: right-click → Open the first time, or codesign with your
+      Apple ID (free) for smoother launch
+
+  Tauri vs Electron:
+    - Tauri: smaller binary, less RAM, Rust shell — good fit
+    - Electron: faster to scaffold if you already know Node; heavier
+
+  Recommendation: **Tauri**, as already noted in ui/README.md and docs/app_todo.txt.
+
+
+PHASE 4 — ANDROID & iOS "REAL" APPS (CAPACITOR)
+-----------------------------------------------
+**Capacitor** (by Ionic team) wraps your existing web app in a native WebView
+and gives you an APK/IPA file.
+
+  Why Capacitor over React Native rewrite:
+    - Keeps ``ui/web/app.js`` — Kitchen timers, Bath hub, chat, recipes intact
+    - Same API calls to household server over Tailscale
+    - Add native plugins later (haptics, keep-awake for timers, biometrics)
+
+  Android (no Play Store):
+    1. ``npx cap add android``
+    2. Build debug/release APK in Android Studio
+    3. Send APK via Signal/email — girlfriend enables "Install unknown apps"
+    4. Or: **Google Play Internal testing** (unlisted, max 100 testers) — still
+       not "public" but needs a Play Developer account ($25 one-time)
+
+  iOS (no App Store listing):
+    Options ranked by hassle:
+
+    (1) **Stay on PWA** — zero Apple account, good enough for many households
+    (2) **AltStore / SideStore** — sideload with Apple ID, 7-day resign cycle
+    (3) **Apple Developer Program ($99/yr) + TestFlight** — up to 100 testers,
+        90-day builds, feels like a real app, still not on the public store
+    (4) **Ad hoc provisioning** — 100 devices/year, manual UDID registration
+
+  Recommendation for you:
+    - **Android**: sideload APK or internal testing track
+    - **iOS**: start with PWA; upgrade to TestFlight if you want icon polish
+      and smoother install (worth it if you live in iOS daily)
+
+
+PHASE 5 — AUTH & MULTI-USER (BEFORE OPENING TO LAN)
+---------------------------------------------------
+Today ``ui/server.py`` uses ``CHAT_ID = 1``, ``USER_ID = 1`` — fine for a
+prototype on localhost, **too open** once bound to ``0.0.0.0`` + Tailscale.
+
+  Minimum for two-person private deployment:
+
+    - Simple shared secret header: ``Authorization: Bearer <household-token>``
+      in app.js (stored in Keychain / localStorage per device)
+    - Or Tailscale ACLs: only your two devices can reach port 8765
+
+    - **Per-person identity**: pass real ``user_id`` + ``display_name`` in
+      ``POST /api/message`` (UI already supports this — wire a one-time picker
+      on first launch: "Who are you? Sebastian / …")
+
+  Do **not** skip this if the server is reachable from outside localhost.
+
+
+NOTIFICATIONS WITHOUT THE APP STORE
+-----------------------------------
+You still want "remind us every Tuesday" to reach a phone in your pocket.
+
+  Tier 1 — Keep Telegram bot (already works):
+    - Server runs bot + UI; pushes go to group chat
+    - Apps are for shopping UX; Telegram for nudges
+    - Zero extra infrastructure
+
+  Tier 2 — ntfy.sh or Pushover (private, simple):
+    - Server POSTs to ntfy topic on reminder fire
+    - Phone installs ntfy app (free, open source), subscribes to secret topic
+    - No Apple push certificate needed
+
+  Tier 3 — Native push (APNs + FCM):
+    - Requires developer accounts and server-side token management
+    - Worth it only after Capacitor/TestFlight path is stable
+
+  Recommendation: **Telegram + ntfy** until native apps are mature.
+
+
+SYNC & OFFLINE (EXPLICITLY DEFER)
+---------------------------------
+"Each phone has its own SQLite" sounds simple but creates merge hell for
+shopping lists. Your current **single-server SQLite** is the right call for
+two users.
+
+  Offline at the store without signal:
+    - v1: accept online-only (Tailscale caches DNS, not data)
+    - v2: read-only cache in service worker (show last loaded list)
+    - v3: full CRDT/sync — only if you outgrow one server (you won't soon)
+
+  Do not build v3 until v1 is in daily use.
+
+
+SUGGESTED ROADMAP (PRACTICAL ORDER)
+-----------------------------------
+
+  Week 1 — "It works on my phone"
+    [ ] Pick household server machine
+    [ ] Run ui/server.py on 0.0.0.0 + shared DB
+    [ ] Install Tailscale on Mac + both phones
+    [ ] Bookmark Tailscale URL on phones; use in browser
+
+  Week 2 — "It feels like an app"
+    [ ] Add PWA manifest + icons to ui/web
+    [ ] Add to Home Screen on iOS and Android
+    [ ] First-launch "Who are you?" for user_id / display_name
+    [ ] Basic API token in ui/server.py (env var HOUSEHOLD_API_TOKEN)
+
+  Week 3 — macOS
+    [ ] Tauri project pointing at Tailscale URL or localhost server
+    [ ] Build .app; codesign for easy open
+    [ ] Optional: menu bar icon, launch at login
+
+  Month 2 — Native shells (if PWA limits bite)
+    [ ] Capacitor wrap ui/web
+    [ ] Android APK sideload to girlfriend
+    [ ] iOS: TestFlight OR stay on PWA
+
+  Later — Nice-to-haves
+    [ ] WebSocket/SSE for live list updates across devices
+    [ ] Native timer keep-awake + haptics (Capacitor plugins)
+    [ ] HTTPS locally (Caddy reverse proxy + Tailscale Serve)
+
+
+WHAT GOES IN EACH "APP" VS SERVER
+---------------------------------
+Keep on the **server** (Python — do not duplicate in Swift/Kotlin):
+
+  - Intent parsing, OpenRouter calls, redaction
+  - SQLite read/write
+  - Recurring reminder scheduler
+  - Morning briefing jobs
+  - Meal planning logic
+
+Keep on **clients** (ui/web or native shell):
+
+  - Layout, navigation, Kitchen/Bath timers (client-side OK for egg timer)
+  - Shopping tile UX, recipe modals
+  - Chat transcript display
+  - Settings UI (server URL, API token, display name)
+
+  Note: Kitchen/Bath countdown timers are purely client-side today — fine.
+  Relative reminders ("in 30 minutes") must stay server-side (already are).
+
+
+COST SUMMARY (PRIVATE TWO-PERSON SETUP)
+---------------------------------------
+  Free path:
+    - Tailscale free tier
+    - PWA on iOS + Android
+    - Sideload Android APK
+    - macOS Tauri .app unsigned / ad hoc
+
+  Paid path (smoother iOS):
+    - Apple Developer Program: $99 / year (TestFlight, easier installs)
+    - Google Play Console: $25 one-time (optional internal testing)
+    - Old Mac mini or Pi: ~$0 if you already own hardware
+
+  Ongoing:
+    - Electricity for always-on server (Pi ≈ €5/year; Mac mini more)
+    - OpenRouter API (optional; rules work without it)
+
+
+DECISIONS BEFORE DEPLOYING
+--------------------------
+Discuss with everyone who will use your instance:
+
+  1. **Server home** — Which machine stays on 24/7? Who reboots it if it dies?
+  2. **iOS comfort** — PWA on home screen enough, or pay $99 for TestFlight?
+  3. **Notifications** — Telegram group OK forever, or want ntfy/native push?
+  4. **Two apartments** — Same list or filter by apartment tag in UI? (profiles
+     already support apartment; UI can grow a filter)
+  5. **Data backup** — scheduled ``data/backups/`` (see docs/domus_notes.txt)?
+
+
+OPEN QUESTIONS (TECHNICAL)
+--------------------------
+  [ ] Embed Python in Tauri sidecar vs always-on systemd/launchd service?
+  [ ] Single HTTPS endpoint via Tailscale Serve vs plain HTTP on tailnet?
+  [ ] Capacitor: load remote URL vs bundle static assets + remote API?
+  [ ] When to merge domus_ui.db and domus.db into one production database?
+
+
+BOTTOM LINE
+-----------
+You do **not** need the App Store to use Domus on your phones.
+
+  **Fastest path:** always-on home server + Tailscale + PWA (Add to Home Screen)
+  **Best macOS path:** Tauri wrapping the same UI
+  **Best native-mobile path:** Capacitor if PWA limits annoy you on iOS
+  **Keep Telegram** for push until you add ntfy or native notifications
+
+The hard work — NLP, lists, recipes, reminders, profiles — is already in
+``domus.core``. Mobile is mostly **access + packaging**, not a rewrite.
+
+
+REFERENCES
+----------
+  ui/README.md          — current HTTP API and architecture
+  ui/server.py          — JSON endpoints mobile clients call
+  src/domus/core.py     — frontend-neutral brain
+  app_todo.txt          — docs/app_todo.txt — macOS / React Native items
+  Tailscale: https://tailscale.com/
+  Tauri: https://tauri.app/
+  Capacitor: https://capacitorjs.com/
+  PWA on iOS: https://web.dev/learn/pwa/

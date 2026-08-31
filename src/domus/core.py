@@ -53,7 +53,7 @@ from domus.food_db import (
     update_recipe,
     delete_recipe,
 )
-from domus.meals import handle_plan_meal
+from domus.briefing import daily_briefing_payload
 from domus.reminder_views import chat_history_payload, reminders_payload
 from domus.router import route_message
 from domus.todos import _add_or_merge_todo
@@ -85,6 +85,7 @@ __all__ = [
     "settings_payload",
     "reminders_payload",
     "chat_history_payload",
+    "daily_briefing_payload",
     "route_message",
 ]
 
@@ -117,6 +118,9 @@ def init_storage(db_path: Path) -> None:
     """Create the database schema and seed tables if they do not exist yet."""
     init_db(db_path)
     init_food_tables(db_path)
+    from domus.households import init_households
+
+    init_households(db_path)
 
 
 def add_item(
@@ -126,6 +130,9 @@ def add_item(
     category: str = "shopping",
     created_by: str = "You",
     due_date: str | None = None,
+    created_by_user_id: int | None = None,
+    assigned_to_user_id: int | None = None,
+    apartment: str | None = None,
 ) -> Todo | None:
     """Add (or quantity-merge) an item directly, without going through chat.
 
@@ -138,6 +145,9 @@ def add_item(
         created_by,
         due_date=due_date,
         category=category,
+        created_by_user_id=created_by_user_id,
+        assigned_to_user_id=assigned_to_user_id,
+        apartment=apartment,
     )
     return todo
 

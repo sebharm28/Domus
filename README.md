@@ -1,6 +1,6 @@
 # Domus
 
-Telegram household assistant for a shared group chat. See [domus_dev_brief.md](./domus_dev_brief.md) for the full plan.
+Telegram household assistant for a shared group chat. See [domus_dev_brief.md](./domus_dev_brief.md) for the full plan. Planning notes and backlog live in [docs/](./docs/).
 
 ## Setup
 

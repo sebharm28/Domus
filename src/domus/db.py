@@ -49,6 +49,8 @@ class CompletionStat:
     display_name: str
     count: int
     samples: list[str]
+    user_id: int | None = None
+    apartment: str | None = None
 
 
 @dataclass(frozen=True)
@@ -273,6 +275,122 @@ def init_db(db_path: Path) -> None:
         _migrate_reminders(conn)
         _migrate_wave2(conn)
         _migrate_wave3(conn)
+        _migrate_wave4(conn)
+        _migrate_wave5(conn)
+        _migrate_wave6(conn)
+        _migrate_wave7(conn)
+
+
+def _migrate_wave5(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS kitchen_notes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            apartment TEXT NOT NULL,
+            author_user_id INTEGER,
+            author_name TEXT NOT NULL,
+            body TEXT NOT NULL DEFAULT '',
+            color TEXT NOT NULL DEFAULT 'yellow',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS bath_cleaning_done (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            apartment TEXT NOT NULL,
+            item_key TEXT NOT NULL,
+            week_start TEXT NOT NULL,
+            done_at TEXT NOT NULL,
+            done_by TEXT NOT NULL,
+            UNIQUE(apartment, item_key, week_start)
+        );
+
+        CREATE TABLE IF NOT EXISTS bath_towels (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            apartment TEXT NOT NULL,
+            label TEXT NOT NULL,
+            use_count INTEGER NOT NULL DEFAULT 0,
+            last_washed_at TEXT,
+            updated_at TEXT NOT NULL,
+            UNIQUE(apartment, label)
+        );
+
+        CREATE TABLE IF NOT EXISTS bath_medicine (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            apartment TEXT NOT NULL,
+            name TEXT NOT NULL,
+            expiry_date TEXT,
+            quantity_note TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        """
+    )
+
+
+def _migrate_wave7(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS apartment_cleaning_chores (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            apartment TEXT NOT NULL,
+            chore_key TEXT NOT NULL,
+            label TEXT NOT NULL,
+            interval_days INTEGER NOT NULL DEFAULT 7,
+            assigned_to_user_id INTEGER,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            UNIQUE(apartment, chore_key)
+        );
+
+        CREATE TABLE IF NOT EXISTS apartment_cleaning_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chore_id INTEGER NOT NULL,
+            apartment TEXT NOT NULL,
+            done_at TEXT NOT NULL,
+            done_by_user_id INTEGER,
+            done_by_name TEXT NOT NULL,
+            FOREIGN KEY (chore_id) REFERENCES apartment_cleaning_chores(id)
+        );
+        """
+    )
+
+
+def _migrate_wave6(conn: sqlite3.Connection) -> None:
+    apt_columns = {row["name"] for row in conn.execute("PRAGMA table_info(apartments)")}
+    if "join_code" not in apt_columns:
+        conn.execute("ALTER TABLE apartments ADD COLUMN join_code TEXT")
+    if "created_by_user_id" not in apt_columns:
+        conn.execute("ALTER TABLE apartments ADD COLUMN created_by_user_id INTEGER")
+
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS apartment_members (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            apartment_label TEXT NOT NULL,
+            user_id INTEGER NOT NULL,
+            role TEXT NOT NULL DEFAULT 'member',
+            status TEXT NOT NULL DEFAULT 'pending',
+            requested_at TEXT NOT NULL,
+            joined_at TEXT,
+            UNIQUE(apartment_label, user_id)
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_apartments_join_code
+            ON apartments(join_code) WHERE join_code IS NOT NULL;
+        """
+    )
+
+
+def _migrate_wave4(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS apartments (
+            label TEXT PRIMARY KEY,
+            chat_id INTEGER NOT NULL UNIQUE,
+            created_at TEXT NOT NULL
+        );
+        """
+    )
 
 
 def _row_to_todo(row: sqlite3.Row) -> Todo:
@@ -702,6 +820,15 @@ def list_user_profiles(db_path: Path) -> list[UserProfile]:
     with connect(db_path) as conn:
         rows = conn.execute("SELECT * FROM users ORDER BY display_name ASC").fetchall()
     return [_row_to_user(row) for row in rows]
+
+
+def delete_user_profile(db_path: Path, user_id: int) -> bool:
+    with connect(db_path) as conn:
+        cursor = conn.execute(
+            "DELETE FROM users WHERE telegram_user_id = ?",
+            (user_id,),
+        )
+        return cursor.rowcount > 0
 
 
 def update_user_profile(
@@ -1398,25 +1525,41 @@ def list_memory_facts(
     ]
 
 
-def list_completion_stats(db_path: Path, *, days: int = 7) -> list[CompletionStat]:
+def list_completion_stats(
+    db_path: Path,
+    *,
+    days: int = 7,
+    apartment: str | None = None,
+    user_id: int | None = None,
+) -> list[CompletionStat]:
     since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    query = """
+        SELECT
+            t.completed_by_user_id AS user_id,
+            COALESCE(u.display_name, 'Unknown') AS display_name,
+            t.apartment AS apartment,
+            COUNT(*) AS count,
+            GROUP_CONCAT(t.text, '||') AS samples
+        FROM todos t
+        LEFT JOIN users u ON t.completed_by_user_id = u.telegram_user_id
+        WHERE t.done = 1
+          AND t.completed_at IS NOT NULL
+          AND t.completed_at >= ?
+          AND t.category != 'shopping'
+    """
+    params: list[str | int] = [since]
+    if apartment:
+        query += " AND LOWER(COALESCE(t.apartment, '')) = LOWER(?)"
+        params.append(apartment.strip())
+    if user_id is not None:
+        query += " AND t.completed_by_user_id = ?"
+        params.append(user_id)
+    query += """
+        GROUP BY t.completed_by_user_id, display_name, t.apartment
+        ORDER BY count DESC, display_name ASC
+    """
     with connect(db_path) as conn:
-        rows = conn.execute(
-            """
-            SELECT
-                COALESCE(u.display_name, 'Unknown') AS display_name,
-                COUNT(*) AS count,
-                GROUP_CONCAT(t.text, '||') AS samples
-            FROM todos t
-            LEFT JOIN users u ON t.completed_by_user_id = u.telegram_user_id
-            WHERE t.done = 1
-              AND t.completed_at IS NOT NULL
-              AND t.completed_at >= ?
-            GROUP BY t.completed_by_user_id, display_name
-            ORDER BY count DESC, display_name ASC
-            """,
-            (since,),
-        ).fetchall()
+        rows = conn.execute(query, params).fetchall()
     stats: list[CompletionStat] = []
     for row in rows:
         samples = [part for part in (row["samples"] or "").split("||") if part][:5]
@@ -1425,6 +1568,8 @@ def list_completion_stats(db_path: Path, *, days: int = 7) -> list[CompletionSta
                 display_name=row["display_name"],
                 count=int(row["count"]),
                 samples=samples,
+                user_id=row["user_id"],
+                apartment=row["apartment"],
             )
         )
     return stats

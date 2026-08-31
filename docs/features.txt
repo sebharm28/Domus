@@ -1,0 +1,335 @@
+DOMUS — FEATURE CATALOG
+=======================
+Last updated: 2026-08-30
+
+Plain-text overview of everything Domus can do today, plus what is planned.
+For backlog detail see docs/domus_notes.txt and docs/app_todo.txt.
+
+
+PRODUCT SHAPE
+-------------
+Domus is a household assistant for shared living (two users, two apartments).
+
+  Telegram bot  → NLP / rules test harness (wake word "Domus")
+  Web UI        → primary product surface (ui/ over domus.core)
+  SQLite        → single local brain (data/domus.db bot, data/domus_ui.db UI)
+
+Architecture: rules-first intent parsing, optional OpenRouter LLM fallback.
+Bring! sync is deprecated — own UI is the shopping/tasks surface.
+
+
+================================================================================
+CORE — LISTS & TASKS
+================================================================================
+
+Shared to-do and shopping list
+  - Add, list, complete, remove items (natural language or UI forms)
+  - Categories: shopping, household, admin, maintenance, personal, general
+  - Due dates on tasks (not on shopping items)
+  - Shopping quantities: "2 milk" → 2× milk; duplicate adds merge quantities
+  - Export list (plain text / CSV)
+  - Clear shopping list
+  - Category-filtered lists ("show admin tasks")
+
+Task corrections (rules-only, no LLM)
+  - "I said the task is for tomorrow" → sets due date on recent task
+  - "I meant going to the bank" → renames / fixes mistaken entry
+
+Natural-language task edits
+  - "actually that's due tomorrow"
+  - "rename that to pay rent"
+  - "change that to admin"
+
+Assignment & completion tracking
+  - Assign tasks to a person ("give X to Y", "Sebastian's task: …")
+  - Log who completed a task (completed_by + completed_at)
+  - Weekly "who did what" stats
+
+Apartment scoping
+  - Tasks tagged with apartment from user profile
+  - UI filters todos by the signed-in user's apartment
+  - Different apartments → separate chat sessions (see Profiles below)
+
+Undo
+  - "undo" per chat for add / remove / complete / clear / cancel / snooze
+
+
+================================================================================
+REMINDERS
+================================================================================
+
+One-time due-date reminders
+  - Tasks with due dates trigger Telegram push once (reminder_sent flag)
+  - Scheduler checks every 60 seconds
+
+Recurring reminders
+  - Daily, weekly (by weekday), monthly (by day of month)
+  - List / remove recurring reminders
+  - "done with trash" ack advances next due date
+
+Relative (short-term) reminders
+  - "remind me in 30 minutes the oven is on"
+  - One-shot timers in SQLite + scheduler
+  - Cancel pending timer ("cancel the reminder")
+
+Snooze
+  - Snooze todos, recurring reminders, and one-shot timers
+
+Quiet hours
+  - No pushes 22:00–07:00 (configurable); batched into morning briefing
+
+
+================================================================================
+MEALS & RECIPES
+================================================================================
+
+Meal suggestions
+  - Built-in food database (seeded dishes)
+  - Avoids meals eaten in the last 2 days
+  - Diet filter from household profiles (vegetarian, allergies, dislikes)
+
+Cook this → shopping list (plan_meal)
+  - Adds only missing ingredients for a named dish
+
+Weekly meal plan
+  - Plans dinners today → Sunday
+  - Shows plan on request; adds missing ingredients for the week
+
+What's missing for dinner?
+  - Read-only ingredient check vs shopping list
+
+Log meals
+  - "I had pasta for dinner" → meal history for varied suggestions
+
+Explicit recipe add
+  - "add meal grilled cheese: bread, cheese, butter"
+
+Preference learning
+  - "I like X" / "I don't like X" → profile likes/dislikes + custom foods
+
+Casual phrasing
+  - "what should we cook" → suggest_meal
+
+
+================================================================================
+PROFILES & HOUSEHOLDS
+================================================================================
+
+Per-user profiles (SQLite users table)
+  - Display name, apartment, diet, allergies, likes, dislikes
+  - Upsert on message; profile commands in chat
+  - Examples: "I'm vegetarian", "my apartment is …", "show my profile"
+
+Apartment → chat mapping (UI)
+  - Each apartment label gets a stable chat_id (≥100 for UI apartments)
+  - Chat history, one-shot reminders, and timers scoped to that chat
+  - Todos scoped by apartment label on the profile
+  - First real test user: Sebastian @ Karl-Marx-Allee 5
+
+UI profile picker
+  - First launch: pick or create profile (name + apartment required)
+  - Profile chip in header; switch profile → reload chat, todos, reminders
+  - user_id persisted in localStorage on this device
+
+
+================================================================================
+CONVERSATION & NLP
+================================================================================
+
+Wake word
+  - Telegram: messages must start with "Domus"
+  - UI: optional leading "Domus" stripped before routing
+
+Rules-first routing
+  - Built-in regex/rules handle known intents
+  - OpenRouter only when rules return unknown (if API key set)
+  - Default model: meta-llama/llama-3.2-3b-instruct
+
+Private mode
+  - /private prefix or reply-to-bot → rules-only, no OpenRouter that turn
+
+German Phase A
+  - normalize_german_input() maps common DE phrases → EN before rules
+
+Redaction
+  - Configurable patterns in .env before text sent to OpenRouter
+
+Short-term memory ("brain")
+  - chat_context, last_todo_id for corrections and edits
+  - conversation_turns table for UI chat history
+
+Social / meta
+  - hello, thank you, help
+  - /start and /help (Telegram commands)
+
+
+================================================================================
+BRIEFINGS & SCHEDULED JOBS
+================================================================================
+
+Daily briefing (on demand + automatic 08:00)
+  - Tasks due today, overdue, shopping preview, open tasks, meal idea
+
+Evening summary (automatic 20:00)
+  - End-of-day recap
+
+Lifecycle messages (Telegram)
+  - Bot start: "Hi, I am awake and ready."
+  - Bot stop: "Goodbye, I am going to sleep now."
+
+
+================================================================================
+WEB UI (ui/web)
+================================================================================
+
+Navigation (6 tabs)
+  - Home — chat composer + message history, daily briefing card, quick-action chips
+  - Shopping — Bring!-style tiles, quantity +/-, checked-off undo, apartment tags
+  - Tasks — categorized tasks, due-date picker, assignee picker, category filters
+  - Kitchen — recipe book, unit converter, shared sticky notes, egg timer (soft 5 / 6 / 7 / 10 min + custom), meal planner
+  - Bath — shower/toothbrush timers, cleaning checklist, towel laundry, medicine cabinet
+  - Household — profiles, stats, settings, reminders panel
+
+Theme
+  - System / light / dark toggle (default: follow system)
+  - Rosa (Domus) + dark pink (you) chat bubbles
+
+Recipes page (from Kitchen)
+  - Tag filter, detail modal, new recipe form
+  - "Add missing to list" per recipe
+  - "This week" meal-plan strip (Mon–Sun)
+  - Ingredients with amounts, author, prep time, markdown notes
+
+Kitchen notes (shared per apartment)
+  - Sticky-note board (SQLite kitchen_notes) — visible to all apartment members
+  - Markdown toolbar (bold, italic, code), color picker, author + date on each note
+  - Truncated preview with … on the board; full text in editor modal
+  - @mentions — household profiles + @Domus (datalist while typing)
+
+Bath sub-apps
+  - Cleaning checklist — tick-off tiles, weekly reset (Monday)
+  - Towel laundry — log uses, mark washed, last-washed date, needs-wash hint
+  - Medicine cabinet — add items with expiry, status badges, lightweight restock list
+  - Timer done — sound + vibration + browser Notification (permission on timer start)
+
+Reminders panel (Household)
+  - Recurring reminders + pending/recent timers
+  - Remove recurring / cancel timer from UI
+
+API (ui/server.py — stdlib HTTP, no extra deps)
+  - GET  /api/todos?user_id=
+  - GET  /api/reminders?user_id=
+  - GET  /api/chat/history?user_id=
+  - GET  /api/briefing?user_id=
+  - GET  /api/profiles, /api/recipes, /api/settings, /api/stats
+  - GET  /api/meal-plan?user_id=, /api/kitchen-notes?user_id=
+  - GET  /api/bath/cleaning|towels|medicine?user_id=
+  - POST /api/message, /api/todos/add, /api/todos/toggle, /api/todos/remove, /api/todos/quantity
+  - GET  /api/apartment?user_id=
+  - POST /api/profiles/register (mode: create|join)
+  - GET  /api/stats?person=&apartment=
+  - POST /api/profiles/update
+  - POST /api/apartment/leave, /api/apartment/regenerate-code
+  - GET  /api/cleaning-plan?user_id=
+  - POST /api/cleaning-plan/done|add|assign
+  - POST /api/reminders/remove, /api/reminders/cancel-timer
+  - POST /api/recipes/add, /api/recipes/update, /api/recipes/delete, /api/recipes/plan
+  - POST /api/meal-plan/set|clear|suggest|auto
+  - POST /api/kitchen-notes/create|update|delete
+  - POST /api/bath/cleaning/toggle, /api/bath/towels/use|washed, /api/bath/medicine/add|delete
+
+Run: PYTHONPATH=src python ui/server.py → http://127.0.0.1:8765
+
+
+================================================================================
+TELEGRAM BOT
+================================================================================
+
+Role: NLP and rules test harness — not the long-term product surface.
+
+  - Polling (no public server required)
+  - Group chat with wake word
+  - Same core brain as UI (domus.core)
+  - Conversation logs: logs/session_*.log (gitignored, local only)
+
+Run: PYTHONPATH=src python -m domus
+
+
+================================================================================
+INFRASTRUCTURE
+================================================================================
+
+Storage
+  - SQLite: todos, reminders, foods, meal_history, meal_plans (per apartment),
+    users, apartments, apartment_members, conversation_turns,
+    kitchen_notes, bath_*, …
+  - UI DB: data/domus_ui.db — see docs/domus_notes.txt DATABASES section
+
+Apartment membership
+  - 13-character join code per apartment
+  - Create or join on profile setup; owner accepts pending members
+  - Leave apartment, regenerate code (owner), pending count badge on tab
+  - See docs/apartment_discussion.txt
+
+Household UI
+  - Edit profile (diet, allergies, likes, dislikes)
+  - Stats filtered by person / apartment
+  - Settings read-only (briefing + quiet hours from .env)
+  - Shared cleaning plan sub-app (chores, assignee, done log, overdue)
+
+Scheduler (python-telegram-bot job queue)
+  - Due-date reminders, recurring reminders, briefings
+
+Testing
+  - tests/test_intents.py, tests/test_nlp_polish.py (golden phrases)
+  - Run: PYTHONPATH=src python -m unittest discover -s tests
+
+Config (.env)
+  - OPENROUTER_API_KEY, DATABASE_PATH, BRIEFING_HOUR, EVENING_BRIEFING_HOUR,
+    redaction patterns, quiet hours, …
+
+
+================================================================================
+PLANNED / NOT YET BUILT
+================================================================================
+
+Meals
+  [ ] Full weekly plan from Monday (today → Sunday only today)
+  [ ] Breakfast/lunch in weekly plan (dinners only)
+
+UI
+  [ ] "What can I cook now?" from pantry (WIP tile — needs data model)
+  [ ] Recipe edit via chat
+  [ ] Real-time updates (websocket/SSE)
+
+Platform
+  [ ] macOS desktop (Tauri preferred)
+  [ ] Android/iOS (React Native / Flutter over same API)
+  [ ] Auth + multi-household beyond local prototype
+  [ ] Database backup on schedule → data/backups/
+
+NLP & language
+  [ ] German Phase B — German replies (i18n layer)
+  [ ] OpenRouter JSON repair (second LLM call — TBD)
+  [ ] Voice message transcription (deferred)
+
+Ops
+  [ ] Move off Telegram once native apps are ready (keep bot as adapter)
+
+
+================================================================================
+DEPRECATED
+================================================================================
+
+Bring! app sync — closed path; building own UI instead (see docs/app_discussion.txt)
+
+
+================================================================================
+REFERENCES
+================================================================================
+
+  docs/domus_notes.txt      — detailed feature guide + backlog decisions
+  docs/app_todo.txt           — living checklist with dates
+  docs/mobile_app_discussion.txt — Pi server, PWA, Tauri, scaling
+  domus_dev_brief.md          — product spec (repo root)
+  ui/README.md                — UI prototype notes

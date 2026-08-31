@@ -6,6 +6,20 @@ const shoppingEl = document.getElementById("shopping");
 const tasksEl = document.getElementById("tasks");
 const recipesEl = document.getElementById("recipes");
 const summaryEl = document.getElementById("summary");
+const briefingCard = document.getElementById("briefing-card");
+const chatEmptyEl = document.getElementById("chat-empty");
+const chatEmptyHint = document.getElementById("chat-empty-hint");
+const homeApartmentEl = document.getElementById("home-apartment");
+const notesBoardEl = document.getElementById("notes-board");
+const notesNewBtn = document.getElementById("notes-new-btn");
+const bathCleaningEl = document.getElementById("bath-cleaning");
+const bathTowelsEl = document.getElementById("bath-towels");
+const bathMedicineListEl = document.getElementById("bath-medicine-list");
+const bathMedicineForm = document.getElementById("bath-medicine-form");
+const mealPlannerGrid = document.getElementById("meal-planner-grid");
+const mealPlannerTitle = document.getElementById("meal-planner-title");
+const mealPlanWeekEl = document.getElementById("meal-plan-week");
+const mealPlanOpenPlanner = document.getElementById("meal-plan-open-planner");
 const connectionEl = document.getElementById("connection");
 const pageTitle = document.getElementById("page-title");
 const themeToggle = document.getElementById("theme-toggle");
@@ -16,7 +30,12 @@ const addShoppingForm = document.getElementById("add-shopping");
 const shoppingInput = document.getElementById("shopping-input");
 const addTaskForm = document.getElementById("add-task");
 const taskInput = document.getElementById("task-input");
+const taskDueInput = document.getElementById("task-due");
 const taskCategory = document.getElementById("task-category");
+const taskAssignee = document.getElementById("task-assignee");
+const taskFiltersEl = document.getElementById("task-filters");
+const checkedOffEl = document.getElementById("checked-off");
+const checkedOffListEl = document.getElementById("checked-off-list");
 const tagFilterEl = document.getElementById("tag-filter");
 const newRecipeBtn = document.getElementById("new-recipe-btn");
 const modalOverlay = document.getElementById("modal-overlay");
@@ -25,12 +44,237 @@ const profilesEl = document.getElementById("profiles");
 const statsEl = document.getElementById("stats");
 const settingsEl = document.getElementById("settings");
 const remindersEl = document.getElementById("reminders");
+const profileChip = document.getElementById("profile-chip");
+const profileChipName = document.getElementById("profile-chip-name");
+const profileOverlay = document.getElementById("profile-overlay");
+const profilePickList = document.getElementById("profile-pick-list");
+const profileNewForm = document.getElementById("profile-new-form");
+const profileNewName = document.getElementById("profile-new-name");
+const profileNewApartment = document.getElementById("profile-new-apartment");
+const profileJoinCode = document.getElementById("profile-join-code");
+const apartmentPanelEl = document.getElementById("apartment-panel");
+const statsFiltersEl = document.getElementById("stats-filters");
+const cleaningPlanListEl = document.getElementById("cleaning-plan-list");
+const cleaningChoreForm = document.getElementById("cleaning-chore-form");
+const openCleaningPlanBtn = document.getElementById("open-cleaning-plan");
+const householdBadgeEl = document.getElementById("household-badge");
 
-const USER_ID = 1;
-const DISPLAY_NAME = localStorage.getItem("domus-display-name") || "You";
+const CHECKED_OFF_MAX = 15;
+
+const TASK_CATEGORIES = [
+  { id: null, label: "All" },
+  { id: "admin", label: "Admin" },
+  { id: "household", label: "Household" },
+  { id: "maintenance", label: "Maintenance" },
+  { id: "personal", label: "Personal" },
+  { id: "general", label: "General" },
+];
+
+const currentUser = {
+  id: null,
+  displayName: null,
+  apartment: null,
+  chatId: null,
+};
+
+function getUserId() {
+  return currentUser.id;
+}
+
+function apiPath(path) {
+  const uid = getUserId();
+  if (uid == null) return path;
+  const sep = path.includes("?") ? "&" : "?";
+  return `${path}${sep}user_id=${encodeURIComponent(uid)}`;
+}
+
+function getDisplayName() {
+  return currentUser.displayName || "You";
+}
+
+function loadStoredUser() {
+  const id = localStorage.getItem("domus-user-id");
+  const name = localStorage.getItem("domus-display-name");
+  const apartment = localStorage.getItem("domus-apartment");
+  if (!id || !name) return null;
+  const parsed = Number(id);
+  if (!Number.isFinite(parsed)) return null;
+  return { id: parsed, displayName: name, apartment: apartment || null };
+}
+
+function applyCurrentUser(id, displayName, apartment = null, chatId = null) {
+  currentUser.id = id;
+  currentUser.displayName = displayName;
+  currentUser.apartment = apartment;
+  currentUser.chatId = chatId;
+  localStorage.setItem("domus-user-id", String(id));
+  localStorage.setItem("domus-display-name", displayName);
+  if (apartment) localStorage.setItem("domus-apartment", apartment);
+  else localStorage.removeItem("domus-apartment");
+  if (profileChip && profileChipName) {
+    profileChipName.textContent = apartment
+      ? `${displayName} · ${apartment}`
+      : displayName;
+    profileChip.hidden = false;
+  }
+  if (state.householdLoaded) renderHousehold();
+  updateHomeContext();
+}
+
+function updateHomeContext() {
+  const onHome = document.getElementById("view-home")?.classList.contains("is-active");
+  const apt = currentUser.apartment;
+  if (homeApartmentEl) {
+    if (onHome && apt) {
+      homeApartmentEl.textContent = apt;
+      homeApartmentEl.hidden = false;
+    } else {
+      homeApartmentEl.hidden = true;
+    }
+  }
+  if (chatEmptyHint && apt) {
+    chatEmptyHint.textContent = `No messages yet for ${apt}. Say hi, add to your list, or tap a quick action below.`;
+  } else if (chatEmptyHint) {
+    chatEmptyHint.textContent =
+      "Say hi, add something to your list, or use a quick action below.";
+  }
+}
+
+function updateChatEmptyState(hasHistory) {
+  if (!chatEmptyEl) return;
+  chatEmptyEl.hidden = hasHistory;
+  messagesEl.classList.toggle("is-empty", !hasHistory);
+}
+
+async function reloadSessionData() {
+  if (!getUserId()) return;
+  messagesEl.innerHTML = "";
+  await Promise.all([loadTodos(), loadChatHistory(), loadBriefing()]);
+  updateHomeContext();
+  if (state.householdLoaded) {
+    const data = await api(apiPath("/api/reminders"));
+    applyReminders(data);
+    renderReminders();
+  }
+}
+
+function isCurrentUser(who) {
+  return who === getDisplayName();
+}
+
+function openProfilePicker({ required = false } = {}) {
+  if (!profileOverlay) return;
+  profileOverlay.hidden = false;
+  profileOverlay.classList.add("is-open");
+  profileOverlay.dataset.required = required ? "1" : "0";
+  renderProfilePicker();
+  refreshProfilesForPicker();
+}
+
+async function refreshProfilesForPicker() {
+  try {
+    const data = await api("/api/profiles");
+    state.profiles = data.profiles || [];
+    renderProfilePicker();
+    renderTaskAssigneeOptions();
+  } catch (_) {
+    /* keep cached list */
+  }
+}
+
+function closeProfilePicker() {
+  if (!profileOverlay) return;
+  if (profileOverlay.dataset.required === "1" && currentUser.id == null) return;
+  profileOverlay.hidden = true;
+  profileOverlay.classList.remove("is-open");
+}
+
+function selectProfile(id) {
+  const profile = state.profiles.find((p) => p.id == id);
+  if (!profile) return;
+  applyCurrentUser(
+    profile.id,
+    profile.display_name,
+    profile.apartment || null,
+    profile.chat_id ?? null
+  );
+  closeProfilePicker();
+  reloadSessionData();
+}
+
+function renderProfilePicker() {
+  if (!profilePickList) return;
+  if (state.profiles.length === 0) {
+    profilePickList.innerHTML = `<p class="empty">No profiles yet — create one below.</p>`;
+    return;
+  }
+  profilePickList.innerHTML = state.profiles
+    .map(
+      (p) => `
+    <button type="button" class="profile-pick-btn${p.id == currentUser.id ? " is-active" : ""}" data-id="${p.id}">
+      <strong>${escapeHtml(p.display_name)}</strong>
+      ${p.apartment ? `<span class="muted">${escapeHtml(p.apartment)}</span>` : ""}
+    </button>`
+    )
+    .join("");
+}
+
+async function registerProfile(displayName, { mode = "create", apartment = "", joinCode = "" } = {}) {
+  const body = { display_name: displayName, mode };
+  if (mode === "join") body.join_code = joinCode;
+  else body.apartment = apartment;
+  const data = await api("/api/profiles/register", body);
+  state.profiles = data.profiles || [];
+  renderTaskAssigneeOptions();
+  const profile = data.profile;
+  if (!profile) throw new Error("Profile not created");
+  applyCurrentUser(
+    profile.id,
+    profile.display_name,
+    profile.apartment || null,
+    profile.chat_id ?? null
+  );
+  closeProfilePicker();
+  if (data.join?.status === "pending") {
+    toast("Join request sent — waiting for an apartment owner to approve.");
+  } else if (data.apartment?.join_code) {
+    toast(`Apartment created. Share code: ${data.apartment.join_code}`);
+  }
+  reloadSessionData();
+}
+
+async function initProfiles() {
+  try {
+    const data = await api("/api/profiles");
+    state.profiles = data.profiles || [];
+    renderTaskAssigneeOptions();
+    const stored = loadStoredUser();
+    if (stored) {
+      const profile = state.profiles.find((p) => p.id === stored.id);
+      if (profile) {
+        applyCurrentUser(
+          profile.id,
+          profile.display_name,
+          profile.apartment || stored.apartment || null,
+          profile.chat_id ?? null
+        );
+        return;
+      }
+    }
+    openProfilePicker({ required: true });
+    setConnected(true);
+  } catch (e) {
+    setConnected(false);
+    openProfilePicker({ required: true });
+  }
+}
 
 const state = {
   todos: [],
+  shopping: [],
+  taskItems: [],
+  checkedOff: [],
+  taskCategoryFilter: null,
   recipes: [],
   tags: [],
   profiles: [],
@@ -41,6 +285,18 @@ const state = {
   activeTag: null,
   recipesLoaded: false,
   householdLoaded: false,
+  briefing: null,
+  mealPlan: null,
+  mealPlanWeekOffset: 0,
+  kitchenNotes: [],
+  noteColors: ["yellow", "pink", "blue", "green", "mint", "rosa"],
+  bathCleaning: null,
+  bathTowels: null,
+  bathMedicine: null,
+  apartment: null,
+  cleaningPlan: null,
+  statsFilterPerson: "all",
+  statsFilterApartment: "mine",
 };
 
 const EMOJI = {
@@ -70,37 +326,64 @@ function escapeHtml(str) {
   }[c]));
 }
 
-// ---- dark mode ------------------------------------------------------------
-function currentTheme() {
-  const saved = localStorage.getItem("domus-theme");
-  if (saved === "dark" || saved === "light") return saved;
+// ---- dark mode (system / light / dark) ------------------------------------
+const THEME_KEY = "domus-theme";
+
+function getThemePreference() {
+  const saved = localStorage.getItem(THEME_KEY);
+  if (saved === "light" || saved === "dark" || saved === "system") return saved;
+  return "system";
+}
+
+function resolveTheme(preference) {
+  if (preference === "light" || preference === "dark") return preference;
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
-function applyTheme(theme) {
-  document.documentElement.setAttribute("data-theme", theme);
-  themeIcon.textContent = theme === "dark" ? "☀️" : "🌙";
-  themeToggle.title = theme === "dark" ? "Switch to light mode" : "Switch to dark mode";
+function applyThemePreference() {
+  const preference = getThemePreference();
+  const resolved = resolveTheme(preference);
+  document.documentElement.setAttribute("data-theme", resolved);
+  document.documentElement.dataset.themePref = preference;
+
+  if (preference === "system") {
+    themeIcon.textContent = "🖥️";
+    themeToggle.title = `System theme (${resolved}) — click for light mode`;
+  } else if (preference === "light") {
+    themeIcon.textContent = "🌙";
+    themeToggle.title = "Light mode — click for dark mode";
+  } else {
+    themeIcon.textContent = "☀️";
+    themeToggle.title = "Dark mode — click for system theme";
+  }
 }
 
-applyTheme(currentTheme());
+applyThemePreference();
 
 themeToggle.addEventListener("click", () => {
-  const next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
-  localStorage.setItem("domus-theme", next);
-  applyTheme(next);
+  const pref = getThemePreference();
+  const next = pref === "system" ? "light" : pref === "light" ? "dark" : "system";
+  localStorage.setItem(THEME_KEY, next);
+  applyThemePreference();
 });
 
-window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (e) => {
-  if (!localStorage.getItem("domus-theme")) applyTheme(e.matches ? "dark" : "light");
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+  if (getThemePreference() === "system") applyThemePreference();
 });
 
 // ---- tab navigation -------------------------------------------------------
 const TAB_PARENT = {
   recipes: "kitchen",
   "kitchen-timer": "kitchen",
+  "kitchen-converter": "kitchen",
+  "kitchen-notes": "kitchen",
+  "kitchen-meal-planner": "kitchen",
+  "bath-cleaning": "bath",
+  "bath-towels": "bath",
+  "bath-medicine": "bath",
   "bath-timer": "bath",
   "bath-brush": "bath",
+  "household-cleaning": "household",
 };
 
 const RING_RADIUS = 88;
@@ -117,7 +400,7 @@ function formatTimerTime(totalSeconds) {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-function playTimerDone() {
+function playTimerDone(title = "Domus timer", body = "Time is up!") {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
     [0, 0.35, 0.7].forEach((delay) => {
@@ -134,6 +417,24 @@ function playTimerDone() {
     /* audio optional */
   }
   if (navigator.vibrate) navigator.vibrate([180, 80, 180]);
+  if ("Notification" in window && Notification.permission === "granted") {
+    try {
+      new Notification(title, { body, tag: "domus-timer", icon: "/favicon.ico" });
+    } catch (_) {
+      /* notification optional */
+    }
+  }
+}
+
+async function ensureTimerNotifications() {
+  if (!("Notification" in window)) return;
+  if (Notification.permission === "default") {
+    try {
+      await Notification.requestPermission();
+    } catch (_) {
+      /* user dismissed */
+    }
+  }
 }
 
 function initCountdownTimer(root) {
@@ -195,7 +496,7 @@ function initCountdownTimer(root) {
     pauseBtn.disabled = true;
     resetBtn.disabled = false;
     syncRing();
-    playTimerDone();
+    playTimerDone("Domus timer", doneLabel);
     toast(doneLabel);
   }
 
@@ -232,6 +533,35 @@ function initCountdownTimer(root) {
     btn.addEventListener("click", () => selectPreset(btn));
   });
 
+  const customSet = root.querySelector(".timer-custom-set");
+  if (customSet) {
+    customSet.addEventListener("click", () => {
+      const min = Number(root.querySelector(".timer-custom-min")?.value || 0);
+      const sec = Number(root.querySelector(".timer-custom-sec")?.value || 0);
+      const total = Math.floor(min) * 60 + Math.floor(sec);
+      if (total <= 0) {
+        toast("Enter a custom duration.");
+        return;
+      }
+      presetBtns.forEach((b) => b.classList.remove("is-active"));
+      totalSeconds = total;
+      remainingSeconds = total;
+      label = `Custom · ${formatTimerTime(total)}`;
+      done = false;
+      running = false;
+      endAt = null;
+      pausedRemaining = 0;
+      if (tickId) {
+        clearInterval(tickId);
+        tickId = null;
+      }
+      startBtn.textContent = "Start";
+      pauseBtn.disabled = true;
+      resetBtn.disabled = false;
+      syncRing();
+    });
+  }
+
   const activePreset = root.querySelector(".timer-preset.is-active");
   if (activePreset) selectPreset(activePreset);
 
@@ -241,9 +571,10 @@ function initCountdownTimer(root) {
       remainingSeconds = totalSeconds;
     }
     if (totalSeconds <= 0) {
-      toast("Pick a preset first.");
+      toast("Pick a preset or set a custom duration.");
       return;
     }
+    ensureTimerNotifications();
     if (running) return;
     running = true;
     endAt = Date.now() + (pausedRemaining || remainingSeconds) * 1000;
@@ -288,7 +619,16 @@ function switchView(name) {
     t.classList.toggle("is-active", t.dataset.view === tabName)
   );
   if (name === "recipes" && !state.recipesLoaded) loadRecipes();
-  if (name === "household" && !state.householdLoaded) loadHousehold();
+  if (name === "recipes") loadMealPlanStrip();
+  if (name === "kitchen-notes") loadKitchenNotes();
+  if (name === "kitchen-meal-planner") loadMealPlanner();
+  if (name === "kitchen-converter") updateConverter();
+  if (name === "bath-cleaning") loadBathCleaning();
+  if (name === "bath-towels") loadBathTowels();
+  if (name === "bath-medicine") loadBathMedicine();
+  if (name === "household") loadHousehold();
+  if (name === "household-cleaning") loadCleaningPlan();
+  updateHomeContext();
 }
 
 document.querySelectorAll(".kitchen-app[data-go]").forEach((tile) => {
@@ -317,43 +657,199 @@ async function api(path, body) {
     ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
     : {};
   const res = await fetch(path, opts);
-  return res.json();
+  const text = await res.text();
+  let data = {};
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error(
+        res.ok ? "Invalid server response" : `Server error (${res.status}) — restart ui/server.py?`
+      );
+    }
+  }
+  if (!res.ok) {
+    throw new Error(data.error || `Request failed (${res.status})`);
+  }
+  return data;
 }
 
 async function loadHousehold() {
   try {
-    const [profiles, settings, stats, reminders] = await Promise.all([
+    const requests = [
       api("/api/profiles"),
       api("/api/settings"),
-      api("/api/stats"),
-      api("/api/reminders"),
-    ]);
+      api(statsApiPath()),
+      api(apiPath("/api/reminders")),
+    ];
+    if (getUserId() && currentUser.apartment) {
+      requests.push(api(apiPath("/api/apartment")));
+    }
+    const results = await Promise.all(requests);
+    const [profiles, settings, stats, reminders, apartment] = results;
     state.profiles = profiles.profiles || [];
     state.settings = settings;
     state.stats = stats.stats || [];
+    state.apartment = apartment || null;
     applyReminders(reminders);
     state.householdLoaded = true;
     renderHousehold();
+    updatePendingBadge();
     setConnected(true);
   } catch (e) {
     setConnected(false);
   }
 }
 
+function statsApiPath() {
+  const params = new URLSearchParams();
+  if (getUserId()) params.set("user_id", String(getUserId()));
+  if (state.statsFilterPerson && state.statsFilterPerson !== "all") {
+    params.set("person", String(state.statsFilterPerson));
+  } else if (state.statsFilterPerson === "all") {
+    params.set("person", "all");
+  }
+  if (state.statsFilterApartment === "all") {
+    params.set("apartment", "all");
+  } else if (state.statsFilterApartment === "mine" && currentUser.apartment) {
+    params.set("apartment", currentUser.apartment);
+  } else if (state.statsFilterApartment && state.statsFilterApartment !== "mine") {
+    params.set("apartment", state.statsFilterApartment);
+  }
+  return `/api/stats?${params}`;
+}
+
+function updatePendingBadge() {
+  if (!householdBadgeEl) return;
+  const pending = state.apartment?.pending?.length || 0;
+  const isOwner = (state.apartment?.members || []).some(
+    (m) => m.user_id === getUserId() && m.role === "owner"
+  );
+  if (pending > 0 && isOwner) {
+    householdBadgeEl.textContent = String(pending);
+    householdBadgeEl.hidden = false;
+  } else {
+    householdBadgeEl.hidden = true;
+  }
+}
+
+async function reloadStats() {
+  try {
+    const data = await api(statsApiPath());
+    state.stats = data.stats || [];
+    renderStatsPanel();
+    setConnected(true);
+  } catch (e) {
+    setConnected(false);
+  }
+}
+
+async function loadBriefing() {
+  if (!briefingCard) return;
+  if (!getUserId()) {
+    briefingCard.innerHTML = `<p class="briefing-placeholder muted">Pick a profile to see today's briefing.</p>`;
+    return;
+  }
+  try {
+    const data = await api(apiPath("/api/briefing"));
+    state.briefing = data;
+    renderBriefingCard();
+    setConnected(true);
+  } catch (e) {
+    if (!state.briefing) {
+      briefingCard.innerHTML = `<p class="briefing-placeholder muted">Couldn't load today's briefing.</p>`;
+    }
+    setConnected(false);
+  }
+}
+
+function renderBriefingCard() {
+  if (!briefingCard || !state.briefing) return;
+  const b = state.briefing;
+  const sections = [];
+
+  if (b.held?.length) {
+    sections.push(
+      `<div class="briefing-section"><h3>Held overnight</h3><ul>${b.held
+        .map((t) => `<li>${escapeHtml(t.text)} <span class="muted">· ${escapeHtml(t.due_label)}</span></li>`)
+        .join("")}</ul></div>`
+    );
+  }
+
+  if (b.due_today?.length) {
+    sections.push(
+      `<div class="briefing-section"><h3>Due today</h3><ul>${b.due_today
+        .map((t) => `<li>${escapeHtml(t.text)} <span class="muted">· ${escapeHtml(t.category)}</span></li>`)
+        .join("")}</ul></div>`
+    );
+  } else {
+    sections.push(`<div class="briefing-section"><h3>Due today</h3><p class="muted">Nothing scheduled.</p></div>`);
+  }
+
+  if (b.overdue?.length) {
+    sections.push(
+      `<div class="briefing-section briefing-overdue"><h3>Overdue</h3><ul>${b.overdue
+        .map((t) => `<li>${escapeHtml(t.text)} <span class="muted">· was ${escapeHtml(t.due_label)}</span></li>`)
+        .join("")}</ul></div>`
+    );
+  }
+
+  const shop = b.shopping || {};
+  if (shop.count > 0) {
+    const preview = (shop.preview || []).map((s) => escapeHtml(s)).join(", ");
+    const extra = shop.count > (shop.preview?.length || 0) ? ` (+${shop.count - shop.preview.length} more)` : "";
+    sections.push(
+      `<div class="briefing-section"><h3>Shopping <span class="briefing-count">${shop.count}</span></h3><p>${preview}${extra}</p></div>`
+    );
+  }
+
+  const other = b.other_open || {};
+  if (other.count > 0) {
+    sections.push(
+      `<div class="briefing-section"><h3>Other tasks <span class="briefing-count">${other.count}</span></h3><ul>${(other.items || [])
+        .map((t) => `<li>${escapeHtml(t.text)}</li>`)
+        .join("")}${other.count > (other.items?.length || 0) ? `<li class="muted">…and ${other.count - other.items.length} more</li>` : ""}</ul></div>`
+    );
+  }
+
+  if (b.meal_idea?.name) {
+    const prep = b.meal_idea.prep_time_min ? ` (~${b.meal_idea.prep_time_min} min)` : "";
+    const mealType = b.meal_idea.meal_type ? b.meal_idea.meal_type.charAt(0).toUpperCase() + b.meal_idea.meal_type.slice(1) : "Meal";
+    sections.push(
+      `<div class="briefing-section briefing-meal"><h3>${escapeHtml(mealType)} idea</h3><p>${escapeHtml(b.meal_idea.name)}${prep}</p></div>`
+    );
+  }
+
+  const aptLine = b.apartment
+    ? `<span class="briefing-apt">${escapeHtml(b.apartment)}</span>`
+    : "";
+
+  briefingCard.innerHTML = `
+    <header class="briefing-header">
+      <div>
+        <h2 class="briefing-title">Today</h2>
+        <p class="briefing-meta">${escapeHtml(b.date_label || "")}${aptLine ? ` · ${aptLine}` : ""}</p>
+      </div>
+      <button type="button" class="btn link briefing-refresh" id="briefing-refresh">Refresh</button>
+    </header>
+    <div class="briefing-body">${sections.join("")}</div>
+  `;
+
+  document.getElementById("briefing-refresh")?.addEventListener("click", () => loadBriefing());
+}
+
 async function loadChatHistory() {
   try {
-    const data = await api("/api/chat/history");
+    const data = await api(apiPath("/api/chat/history"));
     const turns = data.history || [];
     messagesEl.innerHTML = "";
     if (turns.length === 0) {
-      addBubble(
-        "Hi! I'm Domus. Ask me to add items, plan meals, or set reminders — or use the tabs below.",
-        "Domus"
-      );
+      updateChatEmptyState(false);
     } else {
+      updateChatEmptyState(true);
       for (const turn of turns) {
         const who =
-          turn.role === "user" ? turn.display_name || DISPLAY_NAME : "Domus";
+          turn.role === "user" ? turn.display_name || getDisplayName() : "Domus";
         addBubble(turn.text, who);
       }
     }
@@ -361,10 +857,7 @@ async function loadChatHistory() {
     setConnected(true);
   } catch (e) {
     if (!state.chatLoaded) {
-      addBubble(
-        "Hi! I'm Domus. Ask me to add items, plan meals, or set reminders — or use the tabs below.",
-        "Domus"
-      );
+      updateChatEmptyState(false);
     }
     setConnected(false);
   }
@@ -372,13 +865,80 @@ async function loadChatHistory() {
 
 async function loadTodos() {
   try {
-    const data = await api("/api/todos");
-    state.todos = data.todos || [];
+    await ensureProfiles();
+    const data = await api(apiPath("/api/todos"));
+    applyTodosData(data);
     renderTodos();
     setConnected(true);
   } catch (e) {
     setConnected(false);
   }
+}
+
+function applyTodosData(data) {
+  if (data.shopping && data.tasks) {
+    state.shopping = data.shopping;
+    state.taskItems = data.tasks;
+    state.todos = [...state.shopping, ...state.taskItems];
+  } else {
+    state.todos = data.todos || [];
+    state.shopping = state.todos.filter((t) => t.category === "shopping");
+    state.taskItems = state.todos.filter((t) => t.category !== "shopping");
+  }
+}
+
+async function ensureProfiles() {
+  if (state.profiles.length === 0) {
+    try {
+      const data = await api("/api/profiles");
+      state.profiles = data.profiles || [];
+      renderTaskAssigneeOptions();
+    } catch (_) {
+      /* ignore */
+    }
+  }
+}
+
+function hasMultipleApartments() {
+  const apartments = new Set(
+    state.profiles.map((p) => p.apartment).filter(Boolean)
+  );
+  return apartments.size > 1;
+}
+
+function showApartmentTag(item) {
+  if (!hasMultipleApartments()) return false;
+  if (!item.apartment) return true;
+  return item.apartment !== currentUser.apartment;
+}
+
+function apartmentTagLabel(item) {
+  if (!item.apartment) return "Shared";
+  return item.apartment;
+}
+
+function formatDueLabel(iso) {
+  if (!iso) return "";
+  try {
+    const d = new Date(`${iso}T12:00:00`);
+    return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+  } catch (_) {
+    return iso;
+  }
+}
+
+function renderTaskAssigneeOptions() {
+  if (!taskAssignee) return;
+  const current = taskAssignee.value;
+  taskAssignee.innerHTML = `<option value="">Anyone</option>${state.profiles
+    .map(
+      (p) =>
+        `<option value="${p.id}">${escapeHtml(p.display_name)}${
+          p.apartment ? ` · ${escapeHtml(p.apartment)}` : ""
+        }</option>`
+    )
+    .join("")}`;
+  if (current) taskAssignee.value = current;
 }
 
 async function loadRecipes() {
@@ -390,23 +950,664 @@ async function loadRecipes() {
     renderTagFilter();
     renderRecipes();
     renderSummary();
+    loadMealPlanStrip();
   } catch (e) {
     setConnected(false);
   }
 }
 
+// ---- kitchen: unit converter ------------------------------------------------
+const G_PER_CUP = { water: 240, flour: 125, sugar: 200, butter: 227, rice: 185 };
+const ML_PER_CUP = 240;
+const ML_PER_TBSP = 15;
+
+function convertIngredient(amount, from, ingredient) {
+  const gPerCup = G_PER_CUP[ingredient] || 240;
+  let grams;
+  if (from === "g") grams = amount;
+  else if (from === "cup") grams = amount * gPerCup;
+  else if (from === "ml") grams = amount * (gPerCup / ML_PER_CUP);
+  else if (from === "tbsp") grams = amount * ML_PER_TBSP * (gPerCup / ML_PER_CUP);
+  else grams = amount;
+  return {
+    cup: grams / gPerCup,
+    ml: (grams / gPerCup) * ML_PER_CUP,
+    g: grams,
+    tbsp: ((grams / gPerCup) * ML_PER_CUP) / ML_PER_TBSP,
+  };
+}
+
+function updateConverter() {
+  const amount = Number(document.getElementById("conv-amount")?.value || 0);
+  const ingredient = document.getElementById("conv-ingredient")?.value || "water";
+  const from = document.getElementById("conv-from")?.value || "cup";
+  const resultEl = document.getElementById("conv-result");
+  if (!resultEl || amount <= 0) {
+    if (resultEl) resultEl.textContent = "Enter an amount to convert.";
+    return;
+  }
+  const out = convertIngredient(amount, from, ingredient);
+  resultEl.innerHTML = `
+    <strong>${amount} ${from}</strong> ≈
+    ${out.cup.toFixed(2)} cups ·
+    ${Math.round(out.ml)} ml ·
+    ${Math.round(out.g)} g ·
+    ${out.tbsp.toFixed(1)} tbsp
+  `;
+
+  const temp = Number(document.getElementById("conv-temp")?.value || 0);
+  const unit = document.getElementById("conv-temp-unit")?.value || "c";
+  const tempEl = document.getElementById("conv-temp-result");
+  if (tempEl) {
+    if (unit === "c") {
+      const f = temp * (9 / 5) + 32;
+      tempEl.textContent = `${temp} °C ≈ ${f.toFixed(0)} °F (fan ovens often −20 °C)`;
+    } else {
+      const c = (temp - 32) * (5 / 9);
+      tempEl.textContent = `${temp} °F ≈ ${c.toFixed(0)} °C`;
+    }
+  }
+}
+
+function initConverter() {
+  const root = document.getElementById("unit-converter");
+  if (!root) return;
+  root.querySelectorAll(".converter-tab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      root.querySelectorAll(".converter-tab").forEach((t) => t.classList.remove("is-active"));
+      root.querySelectorAll(".converter-panel").forEach((p) => p.classList.remove("is-active"));
+      tab.classList.add("is-active");
+      root.querySelector(`[data-panel="${tab.dataset.tab}"]`)?.classList.add("is-active");
+    });
+  });
+  ["conv-amount", "conv-ingredient", "conv-from", "conv-temp", "conv-temp-unit"].forEach((id) => {
+    document.getElementById(id)?.addEventListener("input", updateConverter);
+    document.getElementById(id)?.addEventListener("change", updateConverter);
+  });
+  updateConverter();
+}
+
+// ---- kitchen: shared notes board ------------------------------------------
+const NOTE_COLOR_CLASS = {
+  yellow: "note-yellow",
+  pink: "note-pink",
+  blue: "note-blue",
+  green: "note-green",
+  mint: "note-mint",
+  rosa: "note-rosa",
+};
+
+function mentionOptionsHtml() {
+  const names = ["Domus", ...state.profiles.map((p) => p.display_name)];
+  return [...new Set(names)]
+    .map((n) => `<option value="${escapeAttr(n)}"></option>`)
+    .join("");
+}
+
+function renderNoteBody(text) {
+  let html = mdToHtml(text || "");
+  html = html.replace(/@([\w.-]+)/g, '<span class="note-mention">@$1</span>');
+  return html;
+}
+
+async function loadKitchenNotes() {
+  if (!notesBoardEl) return;
+  if (!getUserId()) {
+    notesBoardEl.innerHTML = `<p class="empty">Pick a profile to see apartment notes.</p>`;
+    return;
+  }
+  try {
+    await ensureProfiles();
+    const data = await api(apiPath("/api/kitchen-notes"));
+    state.kitchenNotes = data.notes || [];
+    state.noteColors = data.colors || state.noteColors;
+    renderNotesBoard();
+    setConnected(true);
+  } catch (e) {
+    notesBoardEl.innerHTML = `<p class="empty">Couldn't load notes.${e.message ? ` ${escapeHtml(e.message)}` : ""}</p>`;
+    setConnected(false);
+  }
+}
+
+function renderNotesBoard() {
+  if (!notesBoardEl) return;
+  if (state.kitchenNotes.length === 0) {
+    notesBoardEl.innerHTML = `<p class="empty">No notes yet — tap + New note to pin one to the board.</p>`;
+    return;
+  }
+  notesBoardEl.innerHTML = state.kitchenNotes
+    .map((note) => {
+      const colorClass = NOTE_COLOR_CLASS[note.color] || "note-yellow";
+      return `
+      <article class="sticky-note ${colorClass}" data-id="${note.id}">
+        <header class="sticky-note-head">
+          <span class="note-author">${escapeHtml(note.author_name)}</span>
+          <span class="note-date">${escapeHtml(note.date_label || "")}</span>
+        </header>
+        <div class="note-preview">${renderNoteBody(note.preview || note.body)}</div>
+      </article>`;
+    })
+    .join("");
+  notesBoardEl.querySelectorAll(".sticky-note").forEach((card) => {
+    card.addEventListener("click", () => openNoteEditor(Number(card.dataset.id)));
+  });
+}
+
+function openNoteEditor(noteId) {
+  const note = noteId
+    ? state.kitchenNotes.find((n) => n.id === noteId)
+    : null;
+  const colors = state.noteColors
+    .map(
+      (c) =>
+        `<button type="button" class="note-color-dot note-${c}${note?.color === c || (!note && c === "yellow") ? " is-active" : ""}" data-color="${c}" title="${c}"></button>`
+    )
+    .join("");
+  modalEl.innerHTML = `
+    <button class="close" type="button" aria-label="Close">×</button>
+    <h2>${note ? "Edit note" : "New note"}</h2>
+    <div class="note-editor-toolbar">
+      <button type="button" class="note-md-btn" data-wrap="**" title="Bold"><strong>B</strong></button>
+      <button type="button" class="note-md-btn" data-wrap="*" title="Italic"><em>I</em></button>
+      <button type="button" class="note-md-btn" data-wrap="\`" title="Code">\`</button>
+      <span class="note-md-hint">@ to mention · **bold** · *italic*</span>
+    </div>
+    <div class="note-color-row">${colors}</div>
+    <textarea id="note-body" class="kitchen-notes" placeholder="Type your note… Use @Name or @Domus" list="note-mentions">${note ? escapeHtml(note.body) : ""}</textarea>
+    <datalist id="note-mentions">${mentionOptionsHtml()}</datalist>
+    <div class="note-preview-box" id="note-preview-box">${note ? renderNoteBody(note.body) : ""}</div>
+    <div class="modal-actions">
+      <button type="button" class="btn primary" id="note-save">Save</button>
+      ${note ? `<button type="button" class="btn link" id="note-delete">Delete</button>` : ""}
+      <button type="button" class="btn link" id="note-cancel">Cancel</button>
+    </div>
+  `;
+  let selectedColor = note?.color || "yellow";
+  const bodyEl = modalEl.querySelector("#note-body");
+  const previewBox = modalEl.querySelector("#note-preview-box");
+  bodyEl?.addEventListener("input", () => {
+    if (previewBox) previewBox.innerHTML = renderNoteBody(bodyEl.value);
+  });
+  modalEl.querySelectorAll(".note-md-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      wrapNoteSelection(bodyEl, btn.dataset.wrap);
+      if (previewBox) previewBox.innerHTML = renderNoteBody(bodyEl.value);
+    });
+  });
+  modalEl.querySelectorAll(".note-color-dot").forEach((dot) => {
+    dot.addEventListener("click", () => {
+      selectedColor = dot.dataset.color;
+      modalEl.querySelectorAll(".note-color-dot").forEach((d) => d.classList.remove("is-active"));
+      dot.classList.add("is-active");
+    });
+  });
+  modalEl.querySelector(".close")?.addEventListener("click", closeModal);
+  modalEl.querySelector("#note-cancel")?.addEventListener("click", closeModal);
+  modalEl.querySelector("#note-save")?.addEventListener("click", () =>
+    saveNoteEditor(note?.id, selectedColor)
+  );
+  modalEl.querySelector("#note-delete")?.addEventListener("click", () =>
+    deleteNote(note.id)
+  );
+  openModal();
+  bodyEl?.focus();
+}
+
+function wrapNoteSelection(textarea, wrap) {
+  if (!textarea) return;
+  const start = textarea.selectionStart;
+  const end = textarea.selectionEnd;
+  const val = textarea.value;
+  const selected = val.slice(start, end) || "text";
+  textarea.value = val.slice(0, start) + wrap + selected + wrap + val.slice(end);
+  textarea.focus();
+}
+
+async function saveNoteEditor(noteId, color) {
+  const body = modalEl.querySelector("#note-body")?.value ?? "";
+  try {
+    if (noteId) {
+      await api("/api/kitchen-notes/update", {
+        id: noteId,
+        body,
+        color,
+        user_id: getUserId(),
+      });
+    } else {
+      await api("/api/kitchen-notes/create", {
+        body,
+        color,
+        user_id: getUserId(),
+      });
+    }
+    closeModal();
+    await loadKitchenNotes();
+    toast("Note saved.");
+  } catch (e) {
+    toast(e.message || "Couldn't save note.");
+    setConnected(false);
+  }
+}
+
+async function deleteNote(noteId) {
+  if (!window.confirm("Delete this note?")) return;
+  try {
+    await api("/api/kitchen-notes/delete", { id: noteId, user_id: getUserId() });
+    closeModal();
+    await loadKitchenNotes();
+    toast("Note deleted.");
+  } catch (e) {
+    setConnected(false);
+  }
+}
+
+notesNewBtn?.addEventListener("click", () => openNoteEditor(null));
+
+// ---- bath hub -------------------------------------------------------------
+async function loadBathCleaning() {
+  if (!bathCleaningEl || !getUserId()) return;
+  try {
+    const data = await api(apiPath("/api/bath/cleaning"));
+    state.bathCleaning = data;
+    renderBathCleaning();
+    setConnected(true);
+  } catch (e) {
+    bathCleaningEl.innerHTML = `<p class="empty">Couldn't load checklist.</p>`;
+    setConnected(false);
+  }
+}
+
+function renderBathCleaning() {
+  if (!bathCleaningEl || !state.bathCleaning) return;
+  const items = state.bathCleaning.items || [];
+  bathCleaningEl.innerHTML = items
+    .map(
+      (item) => `
+    <button type="button" class="bath-tile${item.done ? " is-done" : ""}" data-key="${item.key}">
+      <span class="bath-tile-check">${item.done ? "✓" : ""}</span>
+      <span class="bath-tile-label">${escapeHtml(item.label)}</span>
+      ${item.done_by ? `<span class="bath-tile-meta">${escapeHtml(item.done_by)}</span>` : ""}
+    </button>`
+    )
+    .join("");
+  bathCleaningEl.querySelectorAll(".bath-tile").forEach((tile) => {
+    tile.addEventListener("click", () => toggleBathCleaning(tile.dataset.key));
+  });
+}
+
+async function toggleBathCleaning(itemKey) {
+  try {
+    const data = await api("/api/bath/cleaning/toggle", {
+      item_key: itemKey,
+      user_id: getUserId(),
+    });
+    state.bathCleaning = data;
+    renderBathCleaning();
+    setConnected(true);
+  } catch (e) {
+    setConnected(false);
+  }
+}
+
+async function loadBathTowels() {
+  if (!bathTowelsEl || !getUserId()) return;
+  try {
+    const data = await api(apiPath("/api/bath/towels"));
+    state.bathTowels = data;
+    renderBathTowels();
+    setConnected(true);
+  } catch (e) {
+    bathTowelsEl.innerHTML = `<p class="empty">Couldn't load towels.</p>`;
+    setConnected(false);
+  }
+}
+
+function renderBathTowels() {
+  if (!bathTowelsEl || !state.bathTowels) return;
+  const threshold = state.bathTowels.wash_threshold || 4;
+  bathTowelsEl.innerHTML = (state.bathTowels.towels || [])
+    .map(
+      (t) => `
+    <article class="bath-towel-card${t.needs_wash ? " needs-wash" : ""}">
+      <h3>${escapeHtml(t.label)}</h3>
+      <p class="bath-towel-uses">${t.use_count} use${t.use_count === 1 ? "" : "s"} since wash</p>
+      <p class="muted">${t.last_washed_label ? `Last washed ${escapeHtml(t.last_washed_label)}` : "Not washed yet"}</p>
+      ${t.needs_wash ? `<p class="bath-wash-hint">Ready for laundry (≥${threshold} uses)</p>` : ""}
+      <div class="bath-towel-actions">
+        <button type="button" class="btn" data-action="use" data-label="${escapeAttr(t.label)}">+ Use</button>
+        <button type="button" class="btn primary" data-action="washed" data-label="${escapeAttr(t.label)}">Washed</button>
+      </div>
+    </article>`
+    )
+    .join("");
+  bathTowelsEl.querySelectorAll("[data-action]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const label = btn.dataset.label;
+      if (btn.dataset.action === "use") logTowelUse(label);
+      else logTowelWashed(label);
+    });
+  });
+}
+
+async function logTowelUse(label) {
+  try {
+    const data = await api("/api/bath/towels/use", { label, user_id: getUserId() });
+    state.bathTowels = data;
+    renderBathTowels();
+    setConnected(true);
+  } catch (e) {
+    setConnected(false);
+  }
+}
+
+async function logTowelWashed(label) {
+  try {
+    const data = await api("/api/bath/towels/washed", { label, user_id: getUserId() });
+    state.bathTowels = data;
+    renderBathTowels();
+    toast(`${label} marked washed.`);
+    setConnected(true);
+  } catch (e) {
+    setConnected(false);
+  }
+}
+
+async function loadBathMedicine() {
+  if (!bathMedicineListEl || !getUserId()) return;
+  try {
+    const data = await api(apiPath("/api/bath/medicine"));
+    state.bathMedicine = data;
+    renderBathMedicine();
+    setConnected(true);
+  } catch (e) {
+    bathMedicineListEl.innerHTML = `<p class="empty">Couldn't load cabinet.${e.message ? ` ${escapeHtml(e.message)}` : ""}</p>`;
+    setConnected(false);
+  }
+}
+
+function renderBathMedicine() {
+  if (!bathMedicineListEl || !state.bathMedicine) return;
+  const items = state.bathMedicine.items || [];
+  if (items.length === 0) {
+    bathMedicineListEl.innerHTML = `<p class="empty">Nothing tracked yet — add items above.</p>`;
+    return;
+  }
+  bathMedicineListEl.innerHTML = items
+    .map(
+      (item) => `
+    <div class="bath-medicine-row status-${item.status}">
+      <div>
+        <strong>${escapeHtml(item.name)}</strong>
+        ${item.quantity_note ? `<span class="muted"> · ${escapeHtml(item.quantity_note)}</span>` : ""}
+        ${item.expiry_date ? `<p class="muted">Expires ${escapeHtml(item.expiry_date)}</p>` : ""}
+      </div>
+      <button type="button" class="del" data-id="${item.id}" aria-label="Remove">×</button>
+    </div>`
+    )
+    .join("");
+  bathMedicineListEl.querySelectorAll(".del").forEach((btn) => {
+    btn.addEventListener("click", () => deleteMedicineItem(Number(btn.dataset.id)));
+  });
+}
+
+async function deleteMedicineItem(id) {
+  try {
+    const data = await api("/api/bath/medicine/delete", { id, user_id: getUserId() });
+    state.bathMedicine = data;
+    renderBathMedicine();
+    setConnected(true);
+  } catch (e) {
+    setConnected(false);
+  }
+}
+
+bathMedicineForm?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const name = document.getElementById("medicine-name")?.value.trim();
+  if (!name) return;
+  const expiry = document.getElementById("medicine-expiry")?.value || null;
+  const qty = document.getElementById("medicine-qty")?.value.trim() || null;
+  try {
+    const data = await api("/api/bath/medicine/add", {
+      name,
+      expiry_date: expiry,
+      quantity_note: qty,
+      user_id: getUserId(),
+    });
+    state.bathMedicine = data;
+    renderBathMedicine();
+    bathMedicineForm.reset();
+    toast("Item added.");
+    setConnected(true);
+  } catch (err) {
+    toast(err.message || "Couldn't add item.");
+    setConnected(false);
+  }
+});
+
+// ---- meal planner ---------------------------------------------------------
+function mealPlanApiPath(weekOffset) {
+  return apiPath(`/api/meal-plan?week=${weekOffset}`);
+}
+
+async function loadMealPlanner(weekOffset = state.mealPlanWeekOffset) {
+  if (!mealPlannerGrid) return;
+  state.mealPlanWeekOffset = weekOffset;
+  try {
+    const data = await api(mealPlanApiPath(weekOffset));
+    state.mealPlan = data;
+    renderMealPlanner();
+    if (weekOffset === 0 && mealPlanWeekEl) {
+      renderMealPlanWeek(data, mealPlanWeekEl, { compact: true });
+    }
+    setConnected(true);
+  } catch (e) {
+    mealPlannerGrid.innerHTML = `<p class="empty">Couldn't load meal plan.</p>`;
+    setConnected(false);
+  }
+}
+
+async function loadMealPlanStrip() {
+  if (!mealPlanWeekEl) return;
+  try {
+    const data = await api(mealPlanApiPath(0));
+    renderMealPlanWeek(data, mealPlanWeekEl, { compact: true });
+    setConnected(true);
+  } catch (e) {
+    mealPlanWeekEl.innerHTML = `<p class="empty muted">Meal plan unavailable.</p>`;
+  }
+}
+
+function renderMealPlanWeek(plan, container, { compact = false } = {}) {
+  if (!container || !plan?.days) return;
+  container.innerHTML = plan.days
+    .map((d) => {
+      const dish = d.dish
+        ? `<span class="meal-plan-dish">${escapeHtml(d.dish)}</span>`
+        : `<span class="meal-plan-empty">${compact ? "—" : "Add meal"}</span>`;
+      return `
+      <button type="button" class="meal-plan-day${d.is_today ? " is-today" : ""}${d.dish ? " has-meal" : ""}"
+        data-day="${d.day}" title="${escapeHtml(d.dish || "No meal planned")}">
+        <span class="meal-plan-wd">${escapeHtml(d.weekday)}</span>
+        <span class="meal-plan-dt">${escapeHtml(d.label)}</span>
+        ${dish}
+      </button>`;
+    })
+    .join("");
+  if (!compact) {
+    container.querySelectorAll(".meal-plan-day").forEach((btn) => {
+      btn.addEventListener("click", () => openMealPlanDayModal(btn.dataset.day));
+    });
+  } else {
+    container.querySelectorAll(".meal-plan-day").forEach((btn) => {
+      btn.addEventListener("click", () => switchView("kitchen-meal-planner"));
+    });
+  }
+}
+
+function renderMealPlanner() {
+  if (!state.mealPlan || !mealPlannerGrid) return;
+  const start = state.mealPlan.week_start;
+  const end = state.mealPlan.week_end;
+  if (mealPlannerTitle) {
+    mealPlannerTitle.textContent =
+      state.mealPlanWeekOffset === 0
+        ? "This week"
+        : `${start} – ${end}`;
+  }
+  renderMealPlanWeek(state.mealPlan, mealPlannerGrid, { compact: false });
+}
+
+function openMealPlanDayModal(day) {
+  if (!state.recipesLoaded) loadRecipes();
+  const dayInfo = state.mealPlan?.days?.find((d) => d.day === day);
+  const recipeOptions = state.recipes.length
+    ? state.recipes
+        .map((r) => `<option value="${escapeAttr(r.name)}">${escapeHtml(r.name)}</option>`)
+        .join("")
+    : "";
+  modalEl.innerHTML = `
+    <button class="close" type="button" aria-label="Close">×</button>
+    <h2>${escapeHtml(dayInfo?.weekday || "")} · ${escapeHtml(dayInfo?.label || day)}</h2>
+    <div class="field">
+      <label for="mp-dish">Meal</label>
+      <input id="mp-dish" type="text" placeholder="Type a dish or suggestion" value="${dayInfo?.dish ? escapeAttr(dayInfo.dish) : ""}" list="mp-recipes" />
+      <datalist id="mp-recipes">${recipeOptions}</datalist>
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn primary" id="mp-save">Save</button>
+      <button type="button" class="btn" id="mp-suggest">Suggest dinner</button>
+      <button type="button" class="btn link" id="mp-clear">Clear</button>
+      <button type="button" class="btn link" id="mp-cancel">Cancel</button>
+    </div>
+  `;
+  modalEl.querySelector(".close").addEventListener("click", closeModal);
+  modalEl.querySelector("#mp-cancel").addEventListener("click", closeModal);
+  modalEl.querySelector("#mp-save").addEventListener("click", () => saveMealPlanDay(day));
+  modalEl.querySelector("#mp-suggest").addEventListener("click", () => suggestMealPlanDay(day));
+  modalEl.querySelector("#mp-clear").addEventListener("click", () => clearMealPlanDay(day));
+  openModal();
+  modalEl.querySelector("#mp-dish")?.focus();
+}
+
+async function saveMealPlanDay(day) {
+  const dish = modalEl.querySelector("#mp-dish")?.value.trim();
+  if (!dish) {
+    toast("Enter a meal name.");
+    return;
+  }
+  try {
+    const data = await api("/api/meal-plan/set", {
+      day,
+      dish,
+      week_offset: state.mealPlanWeekOffset,
+      user_id: getUserId(),
+    });
+    state.mealPlan = data;
+    closeModal();
+    renderMealPlanner();
+    renderMealPlanStrip();
+    toast("Meal saved.");
+    setConnected(true);
+  } catch (e) {
+    setConnected(false);
+  }
+}
+
+async function suggestMealPlanDay(day) {
+  try {
+    const data = await api("/api/meal-plan/suggest", {
+      day,
+      week_offset: state.mealPlanWeekOffset,
+      user_id: getUserId(),
+    });
+    state.mealPlan = data;
+    closeModal();
+    renderMealPlanner();
+    renderMealPlanStrip();
+    toast("Dinner suggested.");
+    setConnected(true);
+  } catch (e) {
+    toast("Couldn't suggest a meal.");
+    setConnected(false);
+  }
+}
+
+async function clearMealPlanDay(day) {
+  try {
+    const data = await api("/api/meal-plan/clear", {
+      day,
+      week_offset: state.mealPlanWeekOffset,
+      user_id: getUserId(),
+    });
+    state.mealPlan = data;
+    closeModal();
+    renderMealPlanner();
+    renderMealPlanStrip();
+    toast("Day cleared.");
+    setConnected(true);
+  } catch (e) {
+    setConnected(false);
+  }
+}
+
+async function autoMealPlanWeek() {
+  try {
+    const data = await api("/api/meal-plan/auto", {
+      week_offset: state.mealPlanWeekOffset,
+      user_id: getUserId(),
+    });
+    state.mealPlan = data;
+    renderMealPlanner();
+    renderMealPlanStrip();
+    const msg =
+      data.planned_count > 0
+        ? `Planned ${data.planned_count} dinners.${data.shopping_added?.length ? ` Added ${data.shopping_added.length} items to shopping.` : ""}`
+        : "No dinners could be planned.";
+    toast(msg);
+    if (data.shopping_added?.length) loadTodos();
+    setConnected(true);
+  } catch (e) {
+    toast("Couldn't plan the week.");
+    setConnected(false);
+  }
+}
+
+document.getElementById("meal-plan-prev")?.addEventListener("click", () =>
+  loadMealPlanner(state.mealPlanWeekOffset - 1)
+);
+document.getElementById("meal-plan-next")?.addEventListener("click", () =>
+  loadMealPlanner(state.mealPlanWeekOffset + 1)
+);
+document.getElementById("meal-plan-today")?.addEventListener("click", () => loadMealPlanner(0));
+document.getElementById("meal-plan-auto")?.addEventListener("click", () => autoMealPlanWeek());
+mealPlanOpenPlanner?.addEventListener("click", () => switchView("kitchen-meal-planner"));
+
 // ---- rendering ------------------------------------------------------------
 function renderTodos() {
-  const shopping = state.todos.filter((t) => t.category === "shopping");
-  const others = state.todos.filter((t) => t.category !== "shopping");
-  renderShopping(shopping);
-  renderTasks(others);
+  renderShopping(state.shopping);
+  renderCheckedOff();
+  renderTaskFilters();
+  const filtered = state.taskCategoryFilter
+    ? state.taskItems.filter((t) => t.category === state.taskCategoryFilter)
+    : state.taskItems;
+  renderTasks(filtered);
   renderSummary();
 }
 
+function renderTaskFilters() {
+  if (!taskFiltersEl) return;
+  taskFiltersEl.innerHTML = TASK_CATEGORIES.map(
+    (cat) =>
+      `<button type="button" class="task-filter-chip${
+        state.taskCategoryFilter === cat.id ? " is-active" : ""
+      }" data-category="${cat.id ?? ""}">${escapeHtml(cat.label)}</button>`
+  ).join("");
+}
+
 function renderSummary() {
-  const shopping = state.todos.filter((t) => t.category === "shopping").length;
-  const tasks = state.todos.filter((t) => t.category !== "shopping").length;
+  const shopping = state.shopping.length;
+  const tasks = state.taskItems.length;
   const recipes = state.recipes.length || "…";
   summaryEl.innerHTML = `
     <div class="stat"><div class="num">${shopping}</div><div class="lbl">To buy</div></div>
@@ -422,91 +1623,510 @@ function renderShopping(items) {
     return;
   }
   for (const item of items) {
+    const qty = item.quantity && item.quantity > 1 ? item.quantity : 1;
     const tile = document.createElement("div");
     tile.className = "tile";
     tile.title = "Tap to check off";
+    const aptTag = showApartmentTag(item)
+      ? `<span class="apt-tag" title="Apartment">${escapeHtml(apartmentTagLabel(item))}</span>`
+      : "";
     tile.innerHTML = `
       <button class="del" title="Remove" aria-label="Remove">×</button>
+      ${aptTag}
       <span class="emoji">${emojiFor(item.name)}</span>
       <span class="name">${escapeHtml(item.name)}</span>
-      ${item.quantity && item.quantity > 1 ? `<span class="qty">${item.quantity}</span>` : ""}
+      <div class="qty-controls">
+        <button type="button" class="qty-btn" data-delta="-1" aria-label="Decrease quantity">−</button>
+        <span class="qty-val">${qty}</span>
+        <button type="button" class="qty-btn" data-delta="1" aria-label="Increase quantity">+</button>
+      </div>
     `;
     tile.querySelector(".del").addEventListener("click", (e) => {
       e.stopPropagation();
       removeItem(tile, item.id);
     });
-    tile.addEventListener("click", () => checkOff(tile, item.id));
+    tile.querySelectorAll(".qty-btn").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        adjustQuantity(item.id, Number(btn.dataset.delta));
+      });
+    });
+    tile.addEventListener("click", () => checkOff(tile, item));
     shoppingEl.appendChild(tile);
   }
+}
+
+function renderCheckedOff() {
+  if (!checkedOffEl || !checkedOffListEl) return;
+  if (state.checkedOff.length === 0) {
+    checkedOffEl.hidden = true;
+    return;
+  }
+  checkedOffEl.hidden = false;
+  checkedOffListEl.innerHTML = state.checkedOff
+    .map(
+      (entry) => `
+    <li class="checked-off-item">
+      <span>${escapeHtml(entry.label)}</span>
+      <button type="button" class="btn link checked-off-undo" data-id="${entry.id}">Undo</button>
+    </li>`
+    )
+    .join("");
+  checkedOffListEl.querySelectorAll(".checked-off-undo").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const entry = state.checkedOff.find((e) => e.id === Number(btn.dataset.id));
+      if (entry) undoCheckOff(entry);
+    });
+  });
 }
 
 function renderTasks(items) {
   tasksEl.innerHTML = "";
   if (items.length === 0) {
-    tasksEl.innerHTML = `<p class="empty">No open tasks — add one above.</p>`;
+    const hint = state.taskCategoryFilter
+      ? `No ${state.taskCategoryFilter} tasks — try another filter or add one above.`
+      : "No open tasks — add one above.";
+    tasksEl.innerHTML = `<p class="empty">${hint}</p>`;
     return;
   }
   for (const item of items) {
     const row = document.createElement("div");
     row.className = "row";
-    const due = item.due_date ? `due ${item.due_date}` : "";
-    const assignee = item.assigned_to ? `→ ${item.assigned_to}` : "";
-    const apt = item.apartment ? `[${item.apartment}]` : "";
-    const meta = [apt, assignee, due].filter(Boolean).join(" · ");
+    const due = item.due_date
+      ? `<span class="row-tag row-due">Due ${escapeHtml(formatDueLabel(item.due_date))}</span>`
+      : "";
+    const assignee = item.assigned_to
+      ? `<span class="row-tag row-assignee">→ ${escapeHtml(item.assigned_to)}</span>`
+      : "";
+    const apt =
+      item.apartment && (hasMultipleApartments() || item.apartment !== currentUser.apartment)
+        ? `<span class="row-tag row-apt">${escapeHtml(item.apartment)}</span>`
+        : "";
     row.innerHTML = `
       <span class="check" title="Mark done"></span>
-      <span class="label">${escapeHtml(item.name)}</span>
-      <span class="badge">${escapeHtml(item.category)}</span>
-      <span class="meta">${escapeHtml(meta)}</span>
+      <div class="row-main">
+        <span class="label">${escapeHtml(item.name)}</span>
+        <div class="row-tags">
+          <span class="badge">${escapeHtml(item.category)}</span>
+          ${apt}${assignee}${due}
+        </div>
+      </div>
       <button class="del" title="Remove" aria-label="Remove">×</button>
     `;
-    row.querySelector(".check").addEventListener("click", () => checkOff(row, item.id));
+    row.querySelector(".check").addEventListener("click", () => checkOff(row, item));
     row.querySelector(".del").addEventListener("click", () => removeItem(row, item.id));
     tasksEl.appendChild(row);
   }
 }
 
+function renderApartmentPanel() {
+  if (!apartmentPanelEl) return;
+  const apt = state.apartment;
+  if (!apt?.apartment) {
+    apartmentPanelEl.innerHTML = `<p class="empty muted">Pick a profile with an apartment to see join code and members.</p>`;
+    return;
+  }
+  const pending = apt.pending || [];
+  const members = apt.members || [];
+  const isOwner = members.some(
+    (m) => m.user_id === getUserId() && m.role === "owner" && m.status === "active"
+  );
+  apartmentPanelEl.innerHTML = `
+    <p><strong>${escapeHtml(apt.apartment)}</strong></p>
+    <p class="apartment-code">Join code: <code>${escapeHtml(apt.join_code || "—")}</code></p>
+    <div class="apartment-actions">
+      ${isOwner ? `<button type="button" class="btn link" id="apt-regen-code">New join code</button>` : ""}
+      <button type="button" class="btn link" id="apt-leave">Leave apartment</button>
+    </div>
+    <p class="muted section-hint">Share the join code so roommates can request to join.</p>
+    <h3 class="apartment-subhead">Members</h3>
+    <ul class="apartment-members">
+      ${members
+        .map(
+          (m) => `
+        <li>${escapeHtml(m.display_name)} <span class="muted">${escapeHtml(m.role)}</span>
+        ${isOwner && m.role !== "owner" && m.user_id !== getUserId()
+          ? `<button type="button" class="btn link apt-kick" data-id="${m.user_id}">Remove</button>`
+          : ""}
+        </li>`
+        )
+        .join("")}
+    </ul>
+    ${
+      isOwner && pending.length
+        ? `<h3 class="apartment-subhead">Pending approval</h3>
+      <ul class="apartment-pending">
+        ${pending
+          .map(
+            (m) => `
+          <li>${escapeHtml(m.display_name)}
+            <button type="button" class="btn primary apt-accept" data-id="${m.user_id}">Accept</button>
+          </li>`
+          )
+          .join("")}
+      </ul>`
+        : ""
+    }
+  `;
+  apartmentPanelEl.querySelectorAll(".apt-accept").forEach((btn) => {
+    btn.addEventListener("click", () => acceptApartmentMember(Number(btn.dataset.id)));
+  });
+  apartmentPanelEl.querySelectorAll(".apt-kick").forEach((btn) => {
+    btn.addEventListener("click", () => kickApartmentMember(Number(btn.dataset.id)));
+  });
+  apartmentPanelEl.querySelector("#apt-regen-code")?.addEventListener("click", regenerateJoinCode);
+  apartmentPanelEl.querySelector("#apt-leave")?.addEventListener("click", leaveApartment);
+}
+
+async function regenerateJoinCode() {
+  if (!window.confirm("Generate a new join code? The old code will stop working.")) return;
+  try {
+    const data = await api(apiPath("/api/apartment/regenerate-code"), {});
+    state.apartment = data;
+    renderApartmentPanel();
+    toast(`New code: ${data.join_code}`);
+    setConnected(true);
+  } catch (e) {
+    toast(e.message || "Could not regenerate code.");
+    setConnected(false);
+  }
+}
+
+async function leaveApartment() {
+  if (!window.confirm("Leave this apartment? You will lose access to its chat and tasks.")) return;
+  try {
+    await api(apiPath("/api/apartment/leave"), {});
+    currentUser.apartment = null;
+    state.apartment = null;
+    toast("Left apartment.");
+    reloadSessionData();
+    setConnected(true);
+  } catch (e) {
+    toast(e.message || "Could not leave apartment.");
+    setConnected(false);
+  }
+}
+
+function openProfileEditor(profile) {
+  modalEl.innerHTML = `
+    <button class="close" type="button" aria-label="Close">×</button>
+    <h2>Edit profile</h2>
+    <div class="field">
+      <label for="pe-diet">Diet</label>
+      <input id="pe-diet" type="text" value="${escapeAttr(profile.diet || "")}" placeholder="e.g. vegetarian" />
+    </div>
+    <div class="field">
+      <label for="pe-allergies">Allergies</label>
+      <input id="pe-allergies" type="text" value="${escapeAttr(profile.allergies || "")}" placeholder="comma-separated" />
+    </div>
+    <div class="field">
+      <label for="pe-likes">Likes</label>
+      <input id="pe-likes" type="text" value="${escapeAttr(profile.likes || "")}" placeholder="comma-separated" />
+    </div>
+    <div class="field">
+      <label for="pe-dislikes">Dislikes</label>
+      <input id="pe-dislikes" type="text" value="${escapeAttr(profile.dislikes || "")}" placeholder="comma-separated" />
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn primary" id="pe-save">Save</button>
+      <button type="button" class="btn link" id="pe-cancel">Cancel</button>
+    </div>
+  `;
+  modalEl.querySelector(".close")?.addEventListener("click", closeModal);
+  modalEl.querySelector("#pe-cancel")?.addEventListener("click", closeModal);
+  modalEl.querySelector("#pe-save")?.addEventListener("click", () => saveProfileEditor(profile.id));
+  openModal();
+}
+
+async function saveProfileEditor(profileId) {
+  try {
+    const data = await api(apiPath("/api/profiles/update"), {
+      profile_id: profileId,
+      diet: modalEl.querySelector("#pe-diet")?.value.trim() || "",
+      allergies: modalEl.querySelector("#pe-allergies")?.value.trim() || "",
+      likes: modalEl.querySelector("#pe-likes")?.value.trim() || "",
+      dislikes: modalEl.querySelector("#pe-dislikes")?.value.trim() || "",
+    });
+    state.profiles = data.profiles || [];
+    const profile = data.profile;
+    if (profile && profile.id === currentUser.id) {
+      applyCurrentUser(profile.id, profile.display_name, profile.apartment, profile.chat_id);
+    }
+    closeModal();
+    renderHousehold();
+    toast("Profile updated.");
+    setConnected(true);
+  } catch (e) {
+    toast(e.message || "Could not save profile.");
+    setConnected(false);
+  }
+}
+
+async function acceptApartmentMember(userId) {
+  try {
+    const data = await api(apiPath("/api/apartment/accept"), { member_id: userId });
+    state.apartment = data;
+    state.profiles = data.profiles || state.profiles;
+    renderHousehold();
+    toast("Member accepted.");
+    setConnected(true);
+  } catch (e) {
+    toast(e.message || "Could not accept member.");
+    setConnected(false);
+  }
+}
+
+async function kickApartmentMember(userId) {
+  if (!window.confirm("Remove this member from the apartment?")) return;
+  try {
+    const data = await api(apiPath("/api/apartment/kick"), { member_id: userId });
+    state.apartment = data;
+    state.profiles = data.profiles || state.profiles;
+    renderHousehold();
+    toast("Member removed.");
+    setConnected(true);
+  } catch (e) {
+    toast(e.message || "Could not remove member.");
+    setConnected(false);
+  }
+}
+
+function renderStatsPanel() {
+  if (!statsEl) return;
+  renderStatsFilters();
+  if (state.stats.length === 0) {
+    statsEl.innerHTML = `<p class="empty">No completed tasks in the last 7 days for this filter.</p>`;
+    return;
+  }
+  statsEl.innerHTML = state.stats
+    .map(
+      (s) => `
+      <div class="stat-row">
+        <strong>${escapeHtml(s.display_name)}</strong>
+        <span>${s.count} completed</span>
+        ${s.apartment ? `<span class="muted">${escapeHtml(s.apartment)}</span>` : ""}
+        ${s.samples?.length ? `<span class="muted">${escapeHtml(s.samples.slice(0, 2).join(", "))}</span>` : ""}
+      </div>`
+    )
+    .join("");
+}
+
+function renderStatsFilters() {
+  if (!statsFiltersEl) return;
+  const apartments = [...new Set(state.profiles.map((p) => p.apartment).filter(Boolean))];
+  const personOptions = state.profiles
+    .map(
+      (p) =>
+        `<option value="${p.id}"${String(state.statsFilterPerson) === String(p.id) ? " selected" : ""}>${escapeHtml(p.display_name)}</option>`
+    )
+    .join("");
+  const aptOptions = apartments
+    .map(
+      (a) =>
+        `<option value="${escapeAttr(a)}"${state.statsFilterApartment === a ? " selected" : ""}>${escapeHtml(a)}</option>`
+    )
+    .join("");
+  statsFiltersEl.innerHTML = `
+    <label class="stats-filter">
+      <span>Person</span>
+      <select id="stats-person-filter">
+        <option value="all"${state.statsFilterPerson === "all" ? " selected" : ""}>Everyone</option>
+        ${personOptions}
+      </select>
+    </label>
+    <label class="stats-filter">
+      <span>Apartment</span>
+      <select id="stats-apt-filter">
+        <option value="mine"${state.statsFilterApartment === "mine" ? " selected" : ""}>My apartment</option>
+        <option value="all"${state.statsFilterApartment === "all" ? " selected" : ""}>All apartments</option>
+        ${aptOptions}
+      </select>
+    </label>
+  `;
+  statsFiltersEl.querySelector("#stats-person-filter")?.addEventListener("change", (e) => {
+    state.statsFilterPerson = e.target.value === "all" ? "all" : Number(e.target.value);
+    reloadStats();
+  });
+  statsFiltersEl.querySelector("#stats-apt-filter")?.addEventListener("change", (e) => {
+    state.statsFilterApartment = e.target.value;
+    reloadStats();
+  });
+}
+
 function renderHousehold() {
   if (!profilesEl) return;
 
+  renderApartmentPanel();
+
   if (state.profiles.length === 0) {
-    profilesEl.innerHTML = `<p class="empty">No profiles yet — chat with Domus to create one.</p>`;
+    profilesEl.innerHTML = `<p class="empty">No profiles yet — create one from the profile menu.</p>`;
   } else {
-    profilesEl.innerHTML = state.profiles.map((p) => `
-      <article class="profile-card">
-        <h3>${escapeHtml(p.display_name)}</h3>
+    profilesEl.innerHTML = state.profiles
+      .map(
+        (p) => `
+      <article class="profile-card${p.id === currentUser.id ? " is-you" : ""}">
+        <header class="profile-card-head">
+          <h3>${escapeHtml(p.display_name)}${p.id === currentUser.id ? ' <span class="you-badge">you</span>' : ""}</h3>
+          ${p.id === currentUser.id ? `<button type="button" class="btn link profile-edit-btn" data-id="${p.id}">Edit</button>` : ""}
+        </header>
         ${p.apartment ? `<p><strong>Apartment:</strong> ${escapeHtml(p.apartment)}</p>` : ""}
+        ${p.membership_status === "pending" ? `<p class="muted">Join request pending approval</p>` : ""}
         ${p.diet ? `<p><strong>Diet:</strong> ${escapeHtml(p.diet)}</p>` : ""}
         ${p.likes ? `<p><strong>Likes:</strong> ${escapeHtml(p.likes)}</p>` : ""}
         ${p.dislikes ? `<p><strong>Dislikes:</strong> ${escapeHtml(p.dislikes)}</p>` : ""}
         ${p.allergies ? `<p><strong>Allergies:</strong> ${escapeHtml(p.allergies)}</p>` : ""}
-      </article>
-    `).join("");
+      </article>`
+      )
+      .join("");
+    profilesEl.querySelectorAll(".profile-edit-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const profile = state.profiles.find((p) => p.id === Number(btn.dataset.id));
+        if (profile) openProfileEditor(profile);
+      });
+    });
   }
 
-  if (state.stats.length === 0) {
-    statsEl.innerHTML = `<p class="empty">No completed tasks in the last 7 days.</p>`;
-  } else {
-    statsEl.innerHTML = state.stats.map((s) => `
-      <div class="stat-row">
-        <strong>${escapeHtml(s.display_name)}</strong>
-        <span>${s.count} completed</span>
-        ${s.samples?.length ? `<span class="muted">${escapeHtml(s.samples.slice(0, 2).join(", "))}</span>` : ""}
-      </div>
-    `).join("");
-  }
+  renderStatsPanel();
 
   const cfg = state.settings || {};
   settingsEl.innerHTML = `
-    <p><strong>Morning briefing:</strong> ${cfg.briefing_hour ?? 8}:00</p>
-    <p><strong>Evening summary:</strong> ${cfg.evening_briefing_hour ?? 20}:00</p>
-    <p><strong>Quiet hours:</strong> ${cfg.quiet_hours_enabled ? `${cfg.quiet_hours_start}:00–${cfg.quiet_hours_end}:00` : "off"}</p>
-    <p><strong>Redaction:</strong> ${cfg.redaction_enabled ? "on" : "off"}</p>
-    <p class="muted section-hint">Configure via .env — QUIET_HOURS_*, REDACTION_*</p>
+    <dl class="settings-dl">
+      <dt>Morning briefing</dt><dd>${cfg.briefing_hour ?? 8}:00 daily</dd>
+      <dt>Evening summary</dt><dd>${cfg.evening_briefing_hour ?? 20}:00 daily</dd>
+      <dt>Quiet hours</dt><dd>${cfg.quiet_hours_enabled ? `${cfg.quiet_hours_start}:00 – ${cfg.quiet_hours_end}:00` : "Off"}</dd>
+      <dt>Redaction before LLM</dt><dd>${cfg.redaction_enabled ? "On" : "Off"}</dd>
+    </dl>
+    <p class="muted section-hint">Read-only here. Change via .env: BRIEFING_HOUR, EVENING_BRIEFING_HOUR, QUIET_HOURS_*</p>
   `;
 
   renderReminders();
+  updatePendingBadge();
 }
+
+async function loadCleaningPlan() {
+  if (!cleaningPlanListEl || !getUserId() || !currentUser.apartment) {
+    if (cleaningPlanListEl) {
+      cleaningPlanListEl.innerHTML = `<p class="empty">Join an apartment to use the shared cleaning plan.</p>`;
+    }
+    return;
+  }
+  try {
+    const data = await api(apiPath("/api/cleaning-plan"));
+    state.cleaningPlan = data;
+    renderCleaningPlan();
+    setConnected(true);
+  } catch (e) {
+    cleaningPlanListEl.innerHTML = `<p class="empty">Couldn't load cleaning plan.</p>`;
+    setConnected(false);
+  }
+}
+
+function renderCleaningPlan() {
+  if (!cleaningPlanListEl || !state.cleaningPlan) return;
+  const chores = state.cleaningPlan.chores || [];
+  if (chores.length === 0) {
+    cleaningPlanListEl.innerHTML = `<p class="empty">No chores yet — add one above.</p>`;
+    return;
+  }
+  const memberOptions = (state.profiles || [])
+    .filter((p) => p.apartment === currentUser.apartment)
+    .map(
+      (p) =>
+        `<option value="${p.id}">${escapeHtml(p.display_name)}</option>`
+    )
+    .join("");
+  cleaningPlanListEl.innerHTML = chores
+    .map((c) => {
+      const status = c.overdue
+        ? `<span class="cleaning-overdue">Due — ${c.days_since ?? "?"} days since last</span>`
+        : c.last_done_by
+          ? `<span class="muted">Last: ${escapeHtml(c.last_done_by)}${c.days_since != null ? ` · ${c.days_since}d ago` : ""}</span>`
+          : `<span class="muted">Not done yet</span>`;
+      return `
+      <article class="cleaning-chore-card${c.overdue ? " is-overdue" : ""}">
+        <div class="cleaning-chore-main">
+          <h3>${escapeHtml(c.label)}</h3>
+          <p class="muted">Every ${c.interval_days} day${c.interval_days === 1 ? "" : "s"}</p>
+          ${status}
+        </div>
+        <div class="cleaning-chore-actions">
+          <label class="cleaning-assign">
+            <span class="sr-only">Assign to</span>
+            <select data-chore="${c.id}" class="cleaning-assign-select">
+              <option value="">Unassigned</option>
+              ${memberOptions}
+            </select>
+          </label>
+          <button type="button" class="btn primary cleaning-done-btn" data-id="${c.id}">Done</button>
+        </div>
+      </article>`;
+    })
+    .join("");
+  chores.forEach((c) => {
+    const sel = cleaningPlanListEl.querySelector(`select[data-chore="${c.id}"]`);
+    if (sel && c.assigned_to_user_id) sel.value = String(c.assigned_to_user_id);
+  });
+  cleaningPlanListEl.querySelectorAll(".cleaning-done-btn").forEach((btn) => {
+    btn.addEventListener("click", () => markCleaningDone(Number(btn.dataset.id)));
+  });
+  cleaningPlanListEl.querySelectorAll(".cleaning-assign-select").forEach((sel) => {
+    sel.addEventListener("change", () =>
+      assignCleaningChore(Number(sel.dataset.chore), sel.value ? Number(sel.value) : null)
+    );
+  });
+}
+
+async function markCleaningDone(choreId) {
+  try {
+    const data = await api(apiPath("/api/cleaning-plan/done"), { chore_id: choreId });
+    state.cleaningPlan = data;
+    renderCleaningPlan();
+    toast("Marked done.");
+    setConnected(true);
+  } catch (e) {
+    toast(e.message || "Could not mark done.");
+    setConnected(false);
+  }
+}
+
+async function assignCleaningChore(choreId, userId) {
+  try {
+    const data = await api(apiPath("/api/cleaning-plan/assign"), {
+      chore_id: choreId,
+      assigned_to_user_id: userId,
+    });
+    state.cleaningPlan = data;
+    renderCleaningPlan();
+    setConnected(true);
+  } catch (e) {
+    toast(e.message || "Could not assign.");
+    setConnected(false);
+  }
+}
+
+openCleaningPlanBtn?.addEventListener("click", () => switchView("household-cleaning"));
+
+cleaningChoreForm?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const label = document.getElementById("cleaning-chore-label")?.value.trim();
+  const days = Number(document.getElementById("cleaning-chore-days")?.value || 7);
+  if (!label) return;
+  try {
+    const data = await api(apiPath("/api/cleaning-plan/add"), {
+      label,
+      interval_days: days,
+    });
+    state.cleaningPlan = data;
+    renderCleaningPlan();
+    cleaningChoreForm.reset();
+    document.getElementById("cleaning-chore-days").value = "7";
+    toast("Chore added.");
+    setConnected(true);
+  } catch (err) {
+    toast(err.message || "Could not add chore.");
+    setConnected(false);
+  }
+});
 
 function applyReminders(data) {
   if (!data) return;
@@ -591,7 +2211,7 @@ function renderReminders() {
 
 async function removeRecurringReminder(id) {
   try {
-    const data = await api("/api/reminders/remove", { id });
+    const data = await api("/api/reminders/remove", { id, user_id: getUserId() });
     applyReminders(data);
     renderReminders();
     if (data.removed) toast(`Removed: ${data.removed}`);
@@ -603,7 +2223,7 @@ async function removeRecurringReminder(id) {
 
 async function cancelTimer(id) {
   try {
-    const data = await api("/api/reminders/cancel-timer", { id });
+    const data = await api("/api/reminders/cancel-timer", { id, user_id: getUserId() });
     applyReminders(data);
     renderReminders();
     if (data.cancelled) toast(`Cancelled: ${data.cancelled}`);
@@ -943,8 +2563,9 @@ function escapeAttr(str) {
 
 // ---- actions --------------------------------------------------------------
 function addBubble(text, who) {
+  updateChatEmptyState(true);
   const bubble = document.createElement("div");
-  bubble.className = `bubble ${who === "You" ? "user" : "domus"}`;
+  bubble.className = `bubble ${isCurrentUser(who) ? "user" : "domus"}`;
   const label = document.createElement("span");
   label.className = "who";
   label.textContent = who;
@@ -955,22 +2576,27 @@ function addBubble(text, who) {
 }
 
 async function sendMessage(text) {
-  addBubble(text, DISPLAY_NAME);
+  if (!getUserId()) {
+    openProfilePicker({ required: true });
+    return;
+  }
+  addBubble(text, getDisplayName());
   try {
     const data = await api("/api/message", {
       text,
-      user: DISPLAY_NAME,
-      user_id: USER_ID,
+      user: getDisplayName(),
+      user_id: getUserId(),
     });
     if (data.reply) addBubble(data.reply, "Domus");
     if (data.todos) {
-      state.todos = data.todos;
+      applyTodosData(data);
       renderTodos();
     }
     if (data.reminders) {
       applyReminders(data.reminders);
       if (state.householdLoaded) renderReminders();
     }
+    loadBriefing();
     setConnected(true);
   } catch (e) {
     addBubble("I couldn't reach the Domus backend.", "Domus");
@@ -978,24 +2604,112 @@ async function sendMessage(text) {
   }
 }
 
-async function addTodo(name, category) {
+async function addTodo(name, category, options = {}) {
+  if (!getUserId()) {
+    openProfilePicker({ required: true });
+    return;
+  }
+  const body = {
+    name,
+    category,
+    user: getDisplayName(),
+    user_id: getUserId(),
+  };
+  if (options.dueDate) body.due_date = options.dueDate;
+  if (options.assignedToUserId) body.assigned_to_user_id = options.assignedToUserId;
   try {
-    const data = await api("/api/todos/add", { name, category });
-    state.todos = data.todos || [];
+    const data = await api("/api/todos/add", body);
+    applyTodosData(data);
     renderTodos();
+    loadBriefing();
     setConnected(true);
   } catch (e) {
     setConnected(false);
   }
 }
 
-async function checkOff(el, id) {
+async function adjustQuantity(id, delta) {
+  try {
+    const data = await api("/api/todos/quantity", {
+      id,
+      delta,
+      user_id: getUserId(),
+    });
+    applyTodosData(data);
+    renderTodos();
+    loadBriefing();
+    setConnected(true);
+  } catch (e) {
+    setConnected(false);
+  }
+}
+
+function recordCheckedOff(item) {
+  const qty = item.quantity && item.quantity > 1 ? `${item.quantity}× ` : "";
+  const label = `${qty}${item.name}`;
+  state.checkedOff.unshift({ id: item.id, label, item: { ...item } });
+  if (state.checkedOff.length > CHECKED_OFF_MAX) {
+    state.checkedOff.length = CHECKED_OFF_MAX;
+  }
+}
+
+async function undoCheckOff(entry) {
+  try {
+    const data = await api("/api/todos/toggle", {
+      id: entry.id,
+      done: false,
+      user_id: getUserId(),
+    });
+    applyTodosData(data);
+    state.checkedOff = state.checkedOff.filter((e) => e.id !== entry.id);
+    renderTodos();
+    loadBriefing();
+    toast(`Restored “${entry.item.name}”.`);
+    setConnected(true);
+  } catch (e) {
+    setConnected(false);
+  }
+}
+
+function handleQuickAction(action) {
+  if (!getUserId()) {
+    openProfilePicker({ required: true });
+    return;
+  }
+  if (action === "add-milk") {
+    addTodo("milk", "shopping");
+    toast("Added milk to your list.");
+    return;
+  }
+  if (action === "briefing") {
+    loadBriefing();
+    briefingCard?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    sendMessage("what's on today?");
+    return;
+  }
+  if (action === "plan-dinner") {
+    sendMessage("what should I eat for dinner?");
+  }
+}
+
+async function checkOff(el, itemOrId) {
+  const item =
+    typeof itemOrId === "object"
+      ? itemOrId
+      : [...state.shopping, ...state.taskItems].find((t) => t.id === itemOrId);
+  const id = typeof itemOrId === "object" ? itemOrId.id : itemOrId;
   el.classList.add("checking");
   try {
-    const data = await api("/api/todos/toggle", { id, done: true, user_id: USER_ID });
+    const data = await api("/api/todos/toggle", { id, done: true, user_id: getUserId() });
+    if (item) {
+      recordCheckedOff(item);
+      const entry = state.checkedOff[0];
+      toastUndo(`Checked off “${item.name}”.`, () => undoCheckOff(entry));
+    }
     setTimeout(() => {
-      state.todos = data.todos || [];
+      applyTodosData(data);
       renderTodos();
+      loadBriefing();
     }, 260);
   } catch (e) {
     el.classList.remove("checking");
@@ -1006,10 +2720,11 @@ async function checkOff(el, id) {
 async function removeItem(el, id) {
   el.classList.add("checking");
   try {
-    const data = await api("/api/todos/remove", { id });
+    const data = await api("/api/todos/remove", { id, user_id: getUserId() });
     setTimeout(() => {
-      state.todos = data.todos || [];
+      applyTodosData(data);
       renderTodos();
+      loadBriefing();
     }, 220);
   } catch (e) {
     el.classList.remove("checking");
@@ -1035,10 +2750,7 @@ function toast(text) {
   if (!el) {
     el = document.createElement("div");
     el.id = "toast";
-    el.style.cssText =
-      "position:fixed;left:50%;bottom:96px;transform:translateX(-50%);max-width:440px;" +
-      "background:var(--ink);color:var(--bg);padding:12px 16px;border-radius:12px;" +
-      "font-size:13.5px;box-shadow:var(--glass-shadow);z-index:40;text-align:center;";
+    el.className = "toast";
     document.body.appendChild(el);
   }
   el.textContent = text;
@@ -1047,12 +2759,87 @@ function toast(text) {
   toastTimer = setTimeout(() => (el.style.opacity = "0"), 3200);
 }
 
+function toastUndo(text, onUndo) {
+  let el = document.getElementById("toast");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "toast";
+    el.className = "toast";
+    document.body.appendChild(el);
+  }
+  el.innerHTML = `<span>${escapeHtml(text)}</span> <button type="button" class="toast-undo">Undo</button>`;
+  el.style.opacity = "1";
+  clearTimeout(toastTimer);
+  el.querySelector(".toast-undo")?.addEventListener("click", () => {
+    onUndo();
+    el.style.opacity = "0";
+  });
+  toastTimer = setTimeout(() => (el.style.opacity = "0"), 5000);
+}
+
 function setConnected(ok) {
   connectionEl.textContent = ok ? "connected" : "offline";
   connectionEl.classList.toggle("ok", ok);
 }
 
 // ---- form wiring ----------------------------------------------------------
+if (profileChip) {
+  profileChip.addEventListener("click", () => openProfilePicker({ required: false }));
+}
+
+if (profilePickList) {
+  profilePickList.addEventListener("click", (e) => {
+    const btn = e.target.closest(".profile-pick-btn");
+    if (!btn) return;
+    selectProfile(Number(btn.dataset.id));
+  });
+}
+
+if (profileNewForm) {
+  profileNewForm.querySelectorAll('input[name="profile-mode"]').forEach((radio) => {
+    radio.addEventListener("change", () => {
+      const join = radio.value === "join" && radio.checked;
+      if (profileNewApartment) profileNewApartment.hidden = join;
+      if (profileJoinCode) profileJoinCode.hidden = !join;
+    });
+  });
+
+  profileNewForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const name = profileNewName.value.trim();
+    const mode =
+      profileNewForm.querySelector('input[name="profile-mode"]:checked')?.value || "create";
+    if (!name) {
+      toast("Name is required.");
+      return;
+    }
+    try {
+      if (mode === "join") {
+        const joinCode = profileJoinCode?.value.trim() || "";
+        if (!joinCode) {
+          toast("Apartment code is required.");
+          return;
+        }
+        await registerProfile(name, { mode: "join", joinCode });
+        profileJoinCode.value = "";
+      } else {
+        const apartment = profileNewApartment.value.trim();
+        if (!apartment) {
+          toast("Apartment name is required.");
+          return;
+        }
+        await registerProfile(name, { mode: "create", apartment });
+        profileNewApartment.value = "";
+      }
+      profileNewName.value = "";
+      setConnected(true);
+    } catch (err) {
+      toast(err.message || "Could not create profile.");
+      setConnected(false);
+    }
+  });
+}
+
 composer.addEventListener("submit", (e) => {
   e.preventDefault();
   const text = input.value.trim();
@@ -1060,6 +2847,14 @@ composer.addEventListener("submit", (e) => {
   input.value = "";
   sendMessage(text);
 });
+
+if (quickActionsEl) {
+  quickActionsEl.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-action]");
+    if (!btn) return;
+    handleQuickAction(btn.dataset.action);
+  });
+}
 
 addShoppingForm.addEventListener("submit", (e) => {
   e.preventDefault();
@@ -1073,9 +2868,25 @@ addTaskForm.addEventListener("submit", (e) => {
   e.preventDefault();
   const name = taskInput.value.trim();
   if (!name) return;
+  const dueDate = taskDueInput?.value || null;
+  const assigneeId = taskAssignee?.value ? Number(taskAssignee.value) : null;
   taskInput.value = "";
-  addTodo(name, taskCategory.value);
+  if (taskDueInput) taskDueInput.value = "";
+  addTodo(name, taskCategory.value, {
+    dueDate,
+    assignedToUserId: Number.isFinite(assigneeId) ? assigneeId : null,
+  });
 });
+
+if (taskFiltersEl) {
+  taskFiltersEl.addEventListener("click", (e) => {
+    const btn = e.target.closest(".task-filter-chip");
+    if (!btn) return;
+    const val = btn.dataset.category;
+    state.taskCategoryFilter = val === "" ? null : val;
+    renderTodos();
+  });
+}
 
 newRecipeBtn.addEventListener("click", openNewRecipeForm);
 
@@ -1088,6 +2899,14 @@ document.addEventListener("keydown", (e) => {
 });
 
 // ---- boot -----------------------------------------------------------------
-loadTodos();
-loadRecipes();
-loadChatHistory();
+async function boot() {
+  await initProfiles();
+  loadRecipes();
+  initConverter();
+  updateHomeContext();
+  if (getUserId()) {
+    await reloadSessionData();
+  }
+}
+
+boot();

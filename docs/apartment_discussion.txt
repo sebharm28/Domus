@@ -1,0 +1,114 @@
+DOMUS — APARTMENT MEMBERSHIP DISCUSSION
+========================================
+
+Date: 30 August 2026
+Status: **implemented (prototype v1)** — open for refinement
+Related: src/domus/households.py, ui/server.py, docs/domus_notes.txt (DATABASES)
+
+Problem
+-------
+Profiles were created with a free-text apartment string. There was no shared
+identity for a household, no way for a second person to join the same apartment
+reliably, and profile registration failed in the UI (missing db import).
+
+Goals
+-----
+1. Each apartment gets a **universal 13-character join code** (A–Z, 0–9).
+2. Roommates can **request to join** with that code.
+3. The **apartment owner** approves or rejects pending members.
+4. Owners can **remove (kick)** members.
+5. All apartment-scoped data (chat, todos, notes, meal plans, bath hub) stays
+   tied to the apartment label + chat_id.
+
+
+What we implemented (v1)
+------------------------
+
+Schema (wave 6 migration):
+  apartments.join_code          — 13-char public ID
+  apartments.created_by_user_id — first owner
+  apartment_members             — user_id, role, status, timestamps
+
+Roles & status:
+  role:   owner | member
+  status: active | pending | removed
+
+Flows:
+  **Create apartment** (profile picker → “Create apartment”)
+    → new user + apartment row + join code + owner membership (active)
+    → user.apartment set immediately
+
+  **Join apartment** (profile picker → “Join with code”)
+    → new user + pending membership row
+    → user.apartment NOT set until accepted
+    → toast: “Waiting for approval”
+
+  **Accept** (Household → Apartment panel, owner only)
+    → POST /api/apartment/accept { member_id }
+    → membership → active, user.apartment set
+
+  **Kick** (Household → Apartment panel, owner only)
+    → POST /api/apartment/kick { member_id }
+    → membership → removed, user.apartment cleared
+
+API:
+  GET  /api/apartment?user_id=
+  POST /api/profiles/register  { mode: create|join, display_name, apartment|join_code }
+  POST /api/apartment/accept   { member_id }
+  POST /api/apartment/kick     { member_id }
+
+
+Open questions (please discuss)
+-------------------------------
+
+1. **Who can approve?**
+   Today: **owner only**.
+   Alternative: any active member must approve (consensus) — harder UX, safer for
+   shared flats with no designated “lease holder”.
+
+2. **Auto-accept for known codes?**
+   Some apps auto-join on valid code. We chose manual approve to avoid strangers
+   landing in your shopping list. Option: “open apartment” toggle per household.
+
+3. **Multiple owners?**
+   Not supported yet. Could promote member → co-owner when first owner leaves.
+
+4. **Leaving voluntarily**
+   No “leave apartment” button yet. User can be kicked; self-leave is TODO.
+
+5. **Apartment rename**
+   Label is the primary key today. Renaming would break foreign keys. Future:
+   internal UUID + display label.
+
+6. **Telegram vs UI user IDs**
+   UI assigns sequential user_id (1, 2, 3…). Telegram uses real telegram_user_id.
+   Sharing one DB between bot and UI needs a mapping layer eventually.
+
+7. **Cross-apartment shopping**
+   Shopping list is household-wide today; tasks/notes are apartment-scoped.
+   Confirm this matches real life (shared groceries, separate chores?).
+
+8. **Join code rotation**
+   Owner should be able to regenerate code if leaked — not built yet.
+
+9. **Notifications**
+   Pending join requests don’t push yet. Owner must open Household tab.
+
+
+Recommended next steps
+----------------------
+  [x] POST /api/apartment/leave — member removes themselves (Aug 2026)
+  [x] Regenerate join code (owner) (Aug 2026)
+  [x] Badge on Household tab when pending requests exist (Aug 2026)
+  [ ] Normalize apartment labels (case-fold) on create/join
+  [ ] Multi-owner or “any member can approve” setting
+  [ ] Auth / device trust before opening this on the public internet
+
+
+How to test locally
+-------------------
+  PYTHONPATH=src python ui/server.py
+  1. Create profile + apartment → note join code in toast / Household tab
+  2. Create second profile → Join with code → see “pending”
+  3. As owner → Household → Accept
+  4. Second profile now sees shared chat, todos, meal plan for that apartment

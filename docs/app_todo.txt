@@ -1,10 +1,13 @@
 DOMUS — APP TODO
 ================
-A shared, living checklist for Domus (Telegram bot + future desktop/mobile apps).
+A shared, living checklist for Domus (Telegram bot + web UI + future apps).
 Format: [ ] = todo, [~] = in progress, [x] = done. Add a date + note when you
 close something. Keep this file plain text so it's easy to edit from anywhere.
 
-Last updated: 2026-08-26
+Companion docs: docs/features.txt (catalog), docs/domus_notes.txt (backlog detail),
+docs/mobile_app_discussion.txt (Pi / PWA / native strategy).
+
+Last updated: 2026-08-30
 
 
 DONE
@@ -19,42 +22,117 @@ DONE
 [x] Split Telegram adapter (domus.telegram_bot) from core brain (domus.core)   # PR #2
 [x] UI scaffold: stdlib HTTP backend + web chat + Bring!-style shopping list   # PR #2
 [x] Dark mode for the web UI (toggle + system-preference aware)                # 2026-08-26
-[x] Tabbed UI with liquid-glass bottom nav (Home / Shopping / Tasks / Recipes) # 2026-08-26
+[x] Tabbed UI with liquid-glass bottom nav                                     # 2026-08-26
 [x] Direct add + remove on Shopping and Tasks pages (no chat needed)           # 2026-08-26
 [x] Recipes overview page + "Add missing to list" per recipe                   # 2026-08-26
 [x] Chat colours: Domus = rosa, You = dark pink (light + dark themes)          # 2026-08-26
 [x] Header shows current page + "Domus - Your household assistant" tagline     # 2026-08-26
-[x] Kitchen tab added as a placeholder page ("Work in progress")               # 2026-08-26
 [x] Unified dark-pink / rosa color scheme across the whole UI (no orange/teal) # 2026-08-26
 [x] Merged latest base (telegram waves 3-5) into the UI branch                 # 2026-08-26
 [x] Recipes: ingredient amounts, tags + tag filter, author, markdown notes,    # 2026-08-26
     clickable detail popup, and a "New recipe" form (cards kept as-is)
+[x] NLP polish — German Phase A, assignee phrasing, recurring ack, golden tests # 2026-08-30
+    (tests/test_nlp_polish.py)
+[x] Six-tab nav: Home · Shopping · Tasks · Kitchen · Bath · Household         # 2026-08-30
+[x] Recipes reached via Kitchen hub (not a top-level tab)                       # 2026-08-30
+[x] Kitchen hub — recipe book link + egg timer (6 / 7 / 10 min)                 # 2026-08-30
+[x] Bath hub — shower timer (5 / 10 / 15 min) + toothbrush timer (2 min)      # 2026-08-30
+[x] Household tab — profiles list, stats, settings, reminders panel           # 2026-08-30
+[x] Reminders in UI — recurring + pending timers; remove / cancel from screen   # 2026-08-30
+[x] Chat history — conversation_turns in SQLite, GET /api/chat/history          # 2026-08-30
+[x] NLP wired to UI — POST /api/message → handle_user_message → SQLite          # 2026-08-30
+[x] Profile picker — first launch, localStorage, profile chip in header         # 2026-08-30
+[x] Theme default = system; cycle System → Light → Dark                         # 2026-08-30
+[x] Apartment scoping — one chat_id per apartment; todos filtered by apartment  # 2026-08-30
+    (src/domus/households.py; switch profile → reload chat, todos, reminders)
+[x] Feature catalog — docs/features.txt                                         # 2026-08-30
 
 
-IN PROGRESS
------------
-[~] Prototype UI in ui/ (web client is the first frontend over domus.core)
-[~] Kitchen page — currently a "Work in progress" placeholder; decide scope
-    (ideas: pantry/inventory, what-can-I-cook-now, appliance timers)
+IN PROGRESS — UI DEEP DIVE (Aug 2026)
+-------------------------------------
+[~] Overall UI polish and information architecture (hub model, navigation, copy)
+[x] Kitchen hub — recipe book, unit converter, sticky notes, egg timer, meal planner   # 2026-08-30
+[x] Bath hub — shower/toothbrush timers + cleaning, towels, medicine sub-apps            # 2026-08-30
+[x] Home tab — briefing card, quick-action chips, empty state, apartment in header       # 2026-08-30
+[~] Profile / apartment UX — onboarding second user, roommate at other address
 
 
-NEXT / SHORT TERM
------------------
-[ ] Build out the Kitchen page (replace the WIP placeholder)
-[ ] Surface recurring reminders on a screen (currently only confirmed in chat)
-[ ] Show checked-off history / "undo" for a tapped-off item in the UI
-[ ] Let the UI edit item quantity directly (+/- on a tile), not only via chat
-[ ] Weekly meal-plan view on the Recipes page (uses meal_plans table)
-[ ] Persist the display name / multiple household members in the UI
+NEXT / SHORT TERM — BY SCREEN
+-----------------------------
+
+Home
+[x] Daily briefing card on Home (pull from core briefing, not only chat)        # 2026-08-30
+[x] Quick-action chips below composer (add milk, what's on today?, plan dinner)  # 2026-08-30
+[x] Empty-state copy when apartment chat has no history yet                      # 2026-08-30
+[x] Show apartment name subtly in Home header or profile chip                    # 2026-08-30
+
+Shopping
+[x] Quantity +/- on tiles (not only via chat or re-add)                                  # 2026-08-30
+[x] Show checked-off history for this session (or last N items)                            # 2026-08-30
+[x] Undo for accidental tap-off                                                            # 2026-08-30
+[x] Apartment tag visible on shared items when relevant (two apartments)                   # 2026-08-30
+
+Tasks
+[x] Due-date picker on direct-add form (today only via chat)                               # 2026-08-30
+[x] Category chips / filter row (admin, household, personal, …)                            # 2026-08-30
+[x] Assignee picker when adding a task (household members)                                 # 2026-08-30
+[x] Show apartment + assignee on task rows                                                 # 2026-08-30
+
+Kitchen (hub + sub-apps)
+[x] Unit converter — design + implement (cups ↔ g, °F ↔ °C)                       # 2026-08-30
+[x] Kitchen notes — shared sticky-note board (SQLite, per apartment)                   # 2026-08-30
+    markdown toolbar, colors, author/date, @mentions, truncated preview
+[x] Custom egg-timer duration + soft egg 5 min (was 6 min)                               # 2026-08-30
+[x] Weekly meal-plan view on Recipes page (uses meal_plans table)                        # 2026-08-30
+  [x] Meal planner — calendar sub-app (Mon–Sun, suggest / add / clear per day)             # 2026-08-30
+[ ] Meal planner — deeper review (breakfast/lunch slots, chat/UI week alignment, UX polish) # later
+[ ] "What can I cook now?" from pantry (future — WIP tile in hub; needs data model)
+
+Bath (hub + sub-apps)
+[x] Cleaning checklist — weekly reset, tick-off tiles                                      # 2026-08-30
+[x] Towel laundry — log uses / last washed                                                 # 2026-08-30
+[x] Medicine cabinet — expiry + restock (lightweight, no medical claims)                   # 2026-08-30
+[x] Timer done notification — sound / vibration / browser notification                     # 2026-08-30
+
+Household
+[x] Profile create / join — apartment join code (13 chars), owner accept/kick           # 2026-08-30
+[x] Edit profile fields in UI — diet, allergies, likes, dislikes                        # 2026-08-31
+[x] Invite flow polish — leave apartment, regenerate join code, pending badge on tab      # 2026-08-31
+[x] Stats: filter by person and by apartment                                            # 2026-08-31
+[x] Settings: expose quiet hours, briefing times (read-only)                              # 2026-08-31
+[x] Shared cleaning plan sub-app — chores, assign, who did what, overdue hints           # 2026-08-31
+[x] Database schema documented — docs/domus_notes.txt DATABASES section                   # 2026-08-30
+[x] Meal plans scoped per apartment + 6-week retention                                  # 2026-08-30
+[ ] Stats: longer time ranges (30 days) — optional
+
+Cross-cutting UI
+[ ] Consistent hub tile pattern (live / soon / WIP badges, back navigation)
+[ ] Loading and error states on all API-driven panels
+[ ] Toast copy audit (German later — keep English for now)
+[ ] Mobile viewport pass (safe areas, tab bar, composer keyboard)
+
+
+BACKEND / API (supports UI work)
+--------------------------------
+[x] Fix profile registration — import domus.db in ui/server.py                          # 2026-08-30
+[x] Apartment join code + membership — /api/apartment, accept, kick, leave, regen-code  # 2026-08-31
+[x] POST /api/profiles/update — diet, allergies, likes, dislikes                        # 2026-08-31
+[x] GET /api/stats?person=&apartment= — filtered completion stats                         # 2026-08-31
+[x] GET/POST /api/cleaning-plan — shared apartment chore plan                             # 2026-08-31
+[x] Meal plan per apartment + prune >6 weeks                                              # 2026-08-30
+[ ] Scoped stats — 30-day range option
+[ ] Wire kitchen/bath timers to Domus reminders (optional — "remind me when eggs done")
 
 
 FUTURE / BIGGER
 ---------------
 [ ] macOS desktop app — wrap ui/web in Tauri (preferred) or Electron
 [ ] Android/iOS app — React Native (Expo) or Flutter over the same HTTP API
-[ ] Auth + multi-household support (today the UI uses a single local household)
+[ ] Pi home server + Tailscale (see docs/mobile_app_discussion.txt)
+[ ] Auth beyond local prototype (today: trust the LAN / device)
 [ ] Real-time updates (websocket/SSE) so all clients refresh live
 [ ] Move off Telegram entirely once the apps are ready (keep bot as one adapter)
+[ ] German UI replies (Phase B i18n — input normalization exists)
 
 
 KNOWN ISSUES / TECH DEBT
@@ -63,14 +141,35 @@ KNOWN ISSUES / TECH DEBT
     Unify the add-item splitting so both phrasings behave the same.
 [ ] Fuzzy shopping match is substring-based, so "add 2 milk" can absorb a
     "milk and butter" line. Tighten matching to whole item names.
-[ ] ui/server.py runs route_message via asyncio.run() per request — fine for a
-    prototype, revisit if it becomes a real backend.
+[ ] ui/server.py runs handle_user_message via asyncio.run() per request — fine
+    for a prototype, revisit if it becomes a real backend.
+[ ] Legacy todos in domus_ui.db may have apartment = null (pre-scoping data).
+    Decide: migrate to Karl-Marx-Allee 5 or hide from filtered views.
+[ ] Old chat history lived on chat_id 1; apartment chats start fresh (by design).
+
+
+DECISIONS (recent — for UI design)
+----------------------------------
+- Product surface = web UI first; Telegram = NLP test harness only.
+- Bring! sync = deprecated; own shopping UI is canonical.
+- Each apartment = separate chat session (chat_id ≥ 100 in UI DB).
+- Profile requires apartment on create; first real user: Sebastian @ Karl-Marx-Allee 5.
+- Recipes live under Kitchen, not a top-level tab.
+- Hub model: Kitchen and Bath are app launchers; timers are full-screen sub-views.
+- Kitchen notes: shared sticky-note board per apartment (SQLite), markdown + @mentions.
+- Bath sub-apps: cleaning (weekly reset), towels (use/wash log), medicine (expiry only).
+- Timer done: sound + vibration + browser Notification (permission on start).
+- Apartments: 13-char join code, owner accepts/kicks members (see docs/apartment_discussion.txt).
+- Meal plans: per-apartment, persist across week navigation, auto-prune after 6 weeks.
 
 
 NOTES
 -----
-- Core brain: src/domus/core.py  (frontend-neutral; no messaging platform here)
-- Telegram adapter: src/domus/telegram_bot/
-- UI prototype: ui/  (see ui/README.md)
-- Run the bot:  PYTHONPATH=src python -m domus
-- Run the UI:   PYTHONPATH=src python ui/server.py   ->  http://127.0.0.1:8765
+- Core brain:     src/domus/core.py
+- Apartments:     src/domus/households.py
+- Telegram:       src/domus/telegram_bot/
+- UI prototype:   ui/  (server.py + web/)
+- Feature list:     docs/features.txt
+- Run the bot:    PYTHONPATH=src python -m domus
+- Run the UI:     PYTHONPATH=src python ui/server.py  →  http://127.0.0.1:8765
+- UI database:    data/domus_ui.db  (separate from bot's data/domus.db)

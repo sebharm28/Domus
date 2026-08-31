@@ -3,24 +3,119 @@ from pathlib import Path
 
 from domus import db, food_db
 from domus.dates import format_due_date
+from domus.db import Todo
 from domus.meals import infer_meal_type
 from domus.shopping import format_shopping_display
 
 
-def build_daily_briefing(db_path: Path, today: date | None = None) -> str:
+def _matches_apartment(todo: Todo, apartment: str | None) -> bool:
+    if not apartment:
+        return True
+    if not todo.apartment:
+        return False
+    return todo.apartment.strip().lower() == apartment.strip().lower()
+
+
+def _filter_apartment(todos: list[Todo], apartment: str | None) -> list[Todo]:
+    if not apartment:
+        return todos
+    return [todo for todo in todos if _matches_apartment(todo, apartment)]
+
+
+def _todo_line(todo: Todo) -> dict:
+    return {
+        "id": todo.id,
+        "text": todo.text,
+        "category": todo.category,
+        "due_date": todo.due_date,
+        "due_label": format_due_date(todo.due_date),
+        "apartment": todo.apartment,
+    }
+
+
+def daily_briefing_payload(
+    db_path: Path,
+    *,
+    apartment: str | None = None,
+    today: date | None = None,
+) -> dict:
+    """Structured daily briefing for UI cards (optionally scoped to one apartment)."""
     today = today or date.today()
-    due_today = db.list_todos_due_on(db_path, today)
-    overdue = db.list_overdue_todos(db_path, today)
-    held = db.list_held_reminders(db_path, today)
-    shopping = db.list_open_todos(db_path, category="shopping")
+    due_today = _filter_apartment(db.list_todos_due_on(db_path, today), apartment)
+    overdue = _filter_apartment(db.list_overdue_todos(db_path, today), apartment)
+    held = _filter_apartment(db.list_held_reminders(db_path, today), apartment)
+    if apartment:
+        shopping = db.list_open_todos(db_path, category="shopping", apartment=apartment)
+        open_todos = db.list_open_todos(db_path, apartment=apartment)
+    else:
+        shopping = db.list_open_todos(db_path, category="shopping")
+        open_todos = db.list_open_todos(db_path)
+
     highlighted_ids = {todo.id for todo in due_today} | {todo.id for todo in overdue}
     other_open = [
         todo
-        for todo in db.list_open_todos(db_path)
+        for todo in open_todos
         if todo.category != "shopping" and todo.id not in highlighted_ids
     ]
 
-    lines = [f"Daily briefing — {today.strftime('%a, %d %b %Y')}", ""]
+    meal_type = infer_meal_type("")
+    suggestions = food_db.suggest_foods(db_path, meal_type=meal_type, count=1)
+    meal_idea = None
+    if suggestions:
+        food = suggestions[0]
+        meal_idea = {
+            "name": food.name,
+            "meal_type": meal_type,
+            "prep_time_min": food.prep_time_min,
+        }
+
+    return {
+        "date": today.isoformat(),
+        "date_label": today.strftime("%a, %d %b %Y"),
+        "apartment": apartment,
+        "held": [_todo_line(todo) for todo in held[:5]],
+        "due_today": [_todo_line(todo) for todo in due_today],
+        "overdue": [_todo_line(todo) for todo in overdue],
+        "shopping": {
+            "count": len(shopping),
+            "preview": [format_shopping_display(todo) for todo in shopping[:5]],
+        },
+        "other_open": {
+            "count": len(other_open),
+            "items": [_todo_line(todo) for todo in other_open[:3]],
+        },
+        "meal_idea": meal_idea,
+        "text": build_daily_briefing(db_path, today=today, apartment=apartment),
+    }
+
+
+def build_daily_briefing(
+    db_path: Path,
+    today: date | None = None,
+    *,
+    apartment: str | None = None,
+) -> str:
+    today = today or date.today()
+    due_today = _filter_apartment(db.list_todos_due_on(db_path, today), apartment)
+    overdue = _filter_apartment(db.list_overdue_todos(db_path, today), apartment)
+    held = _filter_apartment(db.list_held_reminders(db_path, today), apartment)
+    if apartment:
+        shopping = db.list_open_todos(db_path, category="shopping", apartment=apartment)
+        open_todos = db.list_open_todos(db_path, apartment=apartment)
+    else:
+        shopping = db.list_open_todos(db_path, category="shopping")
+        open_todos = db.list_open_todos(db_path)
+    highlighted_ids = {todo.id for todo in due_today} | {todo.id for todo in overdue}
+    other_open = [
+        todo
+        for todo in open_todos
+        if todo.category != "shopping" and todo.id not in highlighted_ids
+    ]
+
+    header = f"Daily briefing — {today.strftime('%a, %d %b %Y')}"
+    if apartment:
+        header += f" ({apartment})"
+    lines = [header, ""]
 
     if held:
         lines.append("Held overnight (quiet hours):")
@@ -73,8 +168,8 @@ def build_daily_briefing(db_path: Path, today: date | None = None) -> str:
     return "\n".join(lines).strip()
 
 
-def handle_daily_briefing(db_path: Path) -> str:
-    return build_daily_briefing(db_path)
+def handle_daily_briefing(db_path: Path, *, apartment: str | None = None) -> str:
+    return build_daily_briefing(db_path, apartment=apartment)
 
 
 def build_evening_briefing(db_path: Path, today: date | None = None) -> str:

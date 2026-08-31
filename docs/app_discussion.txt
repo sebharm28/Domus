@@ -246,4 +246,4 @@ REFERENCES
 
 
 Last updated: 25 August 2026
-Related docs: domus_notes.txt (canonical summary), log_discussion.md
+Related docs: docs/domus_notes.txt (canonical summary), docs/log_discussion.md

@@ -14,9 +14,14 @@
           <div>
             <h1 id="page-title">Home</h1>
             <p class="tagline">Domus - Your household assistant</p>
+            <p class="home-apartment" id="home-apartment" hidden></p>
           </div>
         </div>
         <div class="topbar-right">
+          <button class="profile-chip" id="profile-chip" type="button" title="Switch profile" hidden>
+            <span class="profile-chip-icon">👤</span>
+            <span id="profile-chip-name">…</span>
+          </button>
           <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">
             <span class="theme-icon">🌙</span>
           </button>
@@ -27,13 +32,28 @@
       <main class="content">
         <!-- HOME / overview -->
         <section class="view is-active" id="view-home" data-title="Home">
+          <article class="briefing-card" id="briefing-card" aria-live="polite">
+            <p class="briefing-placeholder muted">Loading today…</p>
+          </article>
           <div class="summary" id="summary"></div>
           <div class="chat">
             <div class="messages" id="messages"></div>
+            <div class="chat-empty" id="chat-empty" hidden>
+              <p class="chat-empty-icon" aria-hidden="true">💬</p>
+              <p class="chat-empty-title">Your apartment chat is empty</p>
+              <p class="chat-empty-hint" id="chat-empty-hint">
+                Say hi, add something to your list, or use a quick action below.
+              </p>
+            </div>
             <form class="composer" id="composer" autocomplete="off">
               <input id="input" type="text" placeholder="Ask Domus…  e.g. plan meals for this week" aria-label="Message Domus" />
               <button type="submit" aria-label="Send">Send</button>
             </form>
+            <div class="quick-actions" id="quick-actions" role="group" aria-label="Quick actions">
+              <button type="button" class="quick-chip" data-action="add-milk">🥛 Add milk</button>
+              <button type="button" class="quick-chip" data-action="briefing">📋 What's on today?</button>
+              <button type="button" class="quick-chip" data-action="plan-dinner">🍽 Plan dinner</button>
+            </div>
           </div>
         </section>
 
@@ -44,18 +64,27 @@
             <button type="submit" class="add-btn" aria-label="Add item">+</button>
           </form>
           <div class="grid" id="shopping"></div>
+          <section class="checked-off" id="checked-off" hidden>
+            <h3 class="checked-off-title">Checked off this session</h3>
+            <ul class="checked-off-list" id="checked-off-list"></ul>
+          </section>
         </section>
 
         <!-- TASKS -->
         <section class="view" id="view-tasks" data-title="To-do list">
-          <form class="addbar" id="add-task" autocomplete="off">
+          <div class="task-filters" id="task-filters" role="group" aria-label="Filter by category"></div>
+          <form class="addbar task-addbar" id="add-task" autocomplete="off">
             <input id="task-input" type="text" placeholder="Add a task…  e.g. pay rent" aria-label="Add task" />
+            <input id="task-due" type="date" aria-label="Due date" title="Due date" />
             <select id="task-category" aria-label="Task category">
               <option value="general">General</option>
               <option value="household">Household</option>
               <option value="admin">Admin</option>
               <option value="maintenance">Maintenance</option>
               <option value="personal">Personal</option>
+            </select>
+            <select id="task-assignee" aria-label="Assign to">
+              <option value="">Anyone</option>
             </select>
             <button type="submit" class="add-btn" aria-label="Add task">+</button>
           </form>
@@ -71,6 +100,13 @@
             <div class="tag-filter" id="tag-filter"></div>
             <button class="add-btn" id="new-recipe-btn" title="New recipe" aria-label="New recipe">+</button>
           </div>
+          <section class="meal-plan-strip" id="meal-plan-strip" aria-label="This week's meals">
+            <div class="meal-plan-strip-head">
+              <h2>This week</h2>
+              <button type="button" class="btn link" id="meal-plan-open-planner">Open planner</button>
+            </div>
+            <div class="meal-plan-week" id="meal-plan-week"></div>
+          </section>
           <p class="section-hint">Tap a recipe to view, edit, or delete it. “Add missing” sends ingredients to your shopping list.</p>
           <div class="recipes" id="recipes"></div>
         </section>
@@ -79,11 +115,18 @@
         <section class="view" id="view-household" data-title="Household">
           <div class="household-grid">
             <section class="panel">
+              <h2>Apartment</h2>
+              <div id="apartment-panel" class="apartment-panel">
+                <p class="empty muted">Pick a profile with an apartment to see join code and members.</p>
+              </div>
+            </section>
+            <section class="panel">
               <h2>People</h2>
               <div id="profiles" class="profile-list"></div>
             </section>
             <section class="panel">
               <h2>Who did what (7 days)</h2>
+              <div class="stats-filters" id="stats-filters"></div>
               <div id="stats" class="stats-list"></div>
             </section>
             <section class="panel">
@@ -91,11 +134,30 @@
               <div id="settings" class="settings-block"></div>
             </section>
             <section class="panel panel-wide">
+              <h2>Shared cleaning plan</h2>
+              <p class="section-hint">Track chores, who last did them, and what's overdue for your apartment.</p>
+              <button type="button" class="btn primary" id="open-cleaning-plan">Open cleaning plan</button>
+            </section>
+            <section class="panel panel-wide">
               <h2>Reminders</h2>
               <p class="section-hint">Recurring schedules and pending timers — also manageable via chat.</p>
               <div id="reminders" class="reminders-list"></div>
             </section>
           </div>
+        </section>
+
+        <!-- HOUSEHOLD — cleaning plan -->
+        <section class="view" id="view-household-cleaning" data-title="Cleaning plan">
+          <button class="kitchen-back hub-back" type="button" data-back="household" aria-label="Back to Household">
+            ← Household
+          </button>
+          <p class="section-hint">Mark chores when done; assign roommates so everyone knows who's responsible.</p>
+          <form class="addbar" id="cleaning-chore-form" autocomplete="off">
+            <input id="cleaning-chore-label" type="text" placeholder="New chore" aria-label="Chore name" required />
+            <input id="cleaning-chore-days" type="number" min="1" max="90" value="7" aria-label="Every N days" title="Interval in days" />
+            <button type="submit" class="add-btn" aria-label="Add chore">+</button>
+          </form>
+          <div class="cleaning-plan-list" id="cleaning-plan-list"></div>
         </section>
 
         <!-- KITCHEN — app hub -->
@@ -114,20 +176,114 @@
               <p>Soft, medium, or hard — countdown with a big clock.</p>
             </button>
 
-            <article class="kitchen-app is-soon" aria-disabled="true">
+            <button class="kitchen-app is-live" type="button" data-go="kitchen-meal-planner" aria-label="Open meal planner">
+              <span class="kitchen-app-icon">📅</span>
+              <h2>Meal planner</h2>
+              <p>Calendar view — plan or suggest dinners for the week.</p>
+            </button>
+
+            <button class="kitchen-app is-live" type="button" data-go="kitchen-converter" aria-label="Open unit converter">
               <span class="kitchen-app-icon">⚖️</span>
               <h2>Unit converter</h2>
               <p>Cups, grams, and oven temps at a glance.</p>
-              <span class="soon-badge">Soon</span>
-            </article>
+            </button>
 
-            <article class="kitchen-app is-soon" aria-disabled="true">
+            <button class="kitchen-app is-live" type="button" data-go="kitchen-notes" aria-label="Open kitchen notes">
               <span class="kitchen-app-icon">📝</span>
               <h2>Kitchen notes</h2>
-              <p>Quick scratch pad for substitutions and tweaks.</p>
+              <p>Shared sticky notes with markdown and @mentions.</p>
+            </button>
+
+            <article class="kitchen-app is-soon" aria-disabled="true">
+              <span class="kitchen-app-icon">🥫</span>
+              <h2>What can I cook?</h2>
+              <p>Pantry-aware suggestions — needs inventory data model.</p>
               <span class="soon-badge">Soon</span>
             </article>
           </div>
+        </section>
+
+        <!-- KITCHEN — unit converter -->
+        <section class="view" id="view-kitchen-converter" data-title="Unit converter">
+          <button class="kitchen-back hub-back" type="button" data-back="kitchen" aria-label="Back to Kitchen">
+            ← Kitchen
+          </button>
+          <div class="converter-app" id="unit-converter">
+            <div class="converter-tabs" role="tablist">
+              <button type="button" class="converter-tab is-active" data-tab="volume" role="tab">Volume & weight</button>
+              <button type="button" class="converter-tab" data-tab="temp" role="tab">Oven temp</button>
+            </div>
+            <div class="converter-panel is-active" data-panel="volume">
+              <label class="field">
+                <span>Amount</span>
+                <input type="number" id="conv-amount" min="0" step="any" value="1" />
+              </label>
+              <label class="field">
+                <span>Ingredient</span>
+                <select id="conv-ingredient">
+                  <option value="water">Water / milk</option>
+                  <option value="flour">Flour</option>
+                  <option value="sugar">Sugar</option>
+                  <option value="butter">Butter</option>
+                  <option value="rice">Rice (uncooked)</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>From</span>
+                <select id="conv-from">
+                  <option value="cup">Cups</option>
+                  <option value="ml">Millilitres</option>
+                  <option value="g">Grams</option>
+                  <option value="tbsp">Tablespoons</option>
+                </select>
+              </label>
+              <p class="converter-result" id="conv-result" aria-live="polite"></p>
+            </div>
+            <div class="converter-panel" data-panel="temp">
+              <label class="field">
+                <span>Temperature</span>
+                <input type="number" id="conv-temp" step="any" value="180" />
+              </label>
+              <label class="field">
+                <span>Unit</span>
+                <select id="conv-temp-unit">
+                  <option value="c">°C</option>
+                  <option value="f">°F</option>
+                </select>
+              </label>
+              <p class="converter-result" id="conv-temp-result" aria-live="polite"></p>
+            </div>
+          </div>
+        </section>
+
+        <!-- KITCHEN — notes board -->
+        <section class="view" id="view-kitchen-notes" data-title="Kitchen notes">
+          <button class="kitchen-back hub-back" type="button" data-back="kitchen" aria-label="Back to Kitchen">
+            ← Kitchen
+          </button>
+          <p class="section-hint">Shared clipboard for your apartment — sticky notes with markdown and @mentions.</p>
+          <div class="notes-board-toolbar">
+            <button type="button" class="btn primary" id="notes-new-btn">+ New note</button>
+          </div>
+          <div class="notes-board" id="notes-board"></div>
+        </section>
+
+        <!-- KITCHEN — meal planner -->
+        <section class="view" id="view-kitchen-meal-planner" data-title="Meal planner">
+          <button class="kitchen-back hub-back" type="button" data-back="kitchen" aria-label="Back to Kitchen">
+            ← Kitchen
+          </button>
+          <div class="meal-planner-toolbar">
+            <button type="button" class="btn" id="meal-plan-prev" aria-label="Previous week">←</button>
+            <h2 class="meal-planner-title" id="meal-planner-title">This week</h2>
+            <button type="button" class="btn" id="meal-plan-next" aria-label="Next week">→</button>
+          </div>
+          <div class="meal-planner-actions">
+            <button type="button" class="btn primary" id="meal-plan-auto">Suggest whole week</button>
+            <button type="button" class="btn link" id="meal-plan-today">Jump to today</button>
+          </div>
+          <p class="section-hint">Tap a day to pick a recipe, type a suggestion, or let Domus suggest a dinner.</p>
+          <div class="meal-planner-grid" id="meal-planner-grid"></div>
         </section>
 
         <!-- KITCHEN — egg timer -->
@@ -147,9 +303,16 @@
               </div>
             </div>
             <div class="timer-presets">
-              <button type="button" class="timer-preset" data-secs="360" data-label="Soft egg">Soft · 6 min</button>
+              <button type="button" class="timer-preset" data-secs="300" data-label="Soft egg">Soft · 5 min</button>
               <button type="button" class="timer-preset" data-secs="420" data-label="Medium egg">Medium · 7 min</button>
               <button type="button" class="timer-preset" data-secs="600" data-label="Hard egg">Hard · 10 min</button>
+            </div>
+            <div class="timer-custom">
+              <span class="timer-custom-label">Custom</span>
+              <input type="number" class="timer-custom-min" min="0" max="120" placeholder="min" aria-label="Minutes" />
+              <span class="timer-custom-sep">:</span>
+              <input type="number" class="timer-custom-sec" min="0" max="59" placeholder="sec" aria-label="Seconds" />
+              <button type="button" class="btn timer-custom-set">Set</button>
             </div>
             <div class="timer-controls">
               <button type="button" class="btn primary timer-start">Start</button>
@@ -175,27 +338,57 @@
               <p>Two minutes — what dentists recommend.</p>
             </button>
 
-            <article class="kitchen-app is-soon" aria-disabled="true">
+            <button class="kitchen-app is-live" type="button" data-go="bath-cleaning" aria-label="Open cleaning checklist">
               <span class="kitchen-app-icon">🧹</span>
               <h2>Cleaning checklist</h2>
               <p>Mirror, sink, toilet — weekly bathroom reset.</p>
-              <span class="soon-badge">Soon</span>
-            </article>
+            </button>
 
-            <article class="kitchen-app is-soon" aria-disabled="true">
+            <button class="kitchen-app is-live" type="button" data-go="bath-towels" aria-label="Open towel laundry">
               <span class="kitchen-app-icon">🧺</span>
               <h2>Towel laundry</h2>
-              <p>Log when towels hit the wash — every 3–4 uses.</p>
-              <span class="soon-badge">Soon</span>
-            </article>
+              <p>Log uses and when towels hit the wash.</p>
+            </button>
 
-            <article class="kitchen-app is-soon" aria-disabled="true">
+            <button class="kitchen-app is-live" type="button" data-go="bath-medicine" aria-label="Open medicine cabinet">
               <span class="kitchen-app-icon">💊</span>
               <h2>Medicine cabinet</h2>
-              <p>Expiry dates and restock reminders.</p>
-              <span class="soon-badge">Soon</span>
-            </article>
+              <p>Expiry dates and restock notes (not medical advice).</p>
+            </button>
           </div>
+        </section>
+
+        <!-- BATH — cleaning checklist -->
+        <section class="view" id="view-bath-cleaning" data-title="Cleaning checklist">
+          <button class="kitchen-back hub-back" type="button" data-back="bath" aria-label="Back to Bath">
+            ← Bath
+          </button>
+          <p class="section-hint">Weekly reset — tap to check off. Resets each Monday.</p>
+          <div class="bath-checklist" id="bath-cleaning"></div>
+        </section>
+
+        <!-- BATH — towel laundry -->
+        <section class="view" id="view-bath-towels" data-title="Towel laundry">
+          <button class="kitchen-back hub-back" type="button" data-back="bath" aria-label="Back to Bath">
+            ← Bath
+          </button>
+          <p class="section-hint">Log a use after showering; mark washed when laundry is done.</p>
+          <div class="bath-towels" id="bath-towels"></div>
+        </section>
+
+        <!-- BATH — medicine cabinet -->
+        <section class="view" id="view-bath-medicine" data-title="Medicine cabinet">
+          <button class="kitchen-back hub-back" type="button" data-back="bath" aria-label="Back to Bath">
+            ← Bath
+          </button>
+          <p class="section-hint">Track expiry and restock — lightweight household log, not medical advice.</p>
+          <form class="addbar" id="bath-medicine-form" autocomplete="off">
+            <input id="medicine-name" type="text" placeholder="Item name" aria-label="Medicine name" required />
+            <input id="medicine-expiry" type="date" aria-label="Expiry date" title="Expiry date" />
+            <input id="medicine-qty" type="text" placeholder="Qty note" aria-label="Quantity note" />
+            <button type="submit" class="add-btn" aria-label="Add item">+</button>
+          </form>
+          <div class="bath-medicine-list" id="bath-medicine-list"></div>
         </section>
 
         <!-- BATH — shower timer -->
@@ -292,8 +485,35 @@
             <path d="M16 21v-2a4 4 0 0 0-8 0v2" /><circle cx="12" cy="7" r="4" /><path d="M3 21h18" />
           </svg>
           <span>Household</span>
+          <span class="tab-badge" id="household-badge" hidden></span>
         </button>
       </nav>
+
+      <!-- Profile picker (first launch / switch user) -->
+      <div class="profile-overlay" id="profile-overlay" hidden>
+        <div class="profile-sheet" role="dialog" aria-modal="true" aria-labelledby="profile-sheet-title">
+          <h2 id="profile-sheet-title">Who's using Domus?</h2>
+          <p class="section-hint">Pick your profile. Each apartment gets its own chat, tasks, and reminders on this device.</p>
+          <div id="profile-pick-list" class="profile-pick-list"></div>
+          <form id="profile-new-form" class="profile-new-form" autocomplete="off">
+            <h3>New profile</h3>
+            <div class="profile-mode-row">
+              <label class="profile-mode-option">
+                <input type="radio" name="profile-mode" value="create" checked />
+                Create apartment
+              </label>
+              <label class="profile-mode-option">
+                <input type="radio" name="profile-mode" value="join" />
+                Join with code
+              </label>
+            </div>
+            <input id="profile-new-name" type="text" placeholder="Your name" aria-label="Display name" required />
+            <input id="profile-new-apartment" type="text" placeholder="Apartment name (e.g. Karl-Marx-Allee 5)" aria-label="Apartment" />
+            <input id="profile-join-code" type="text" placeholder="13-character apartment code" aria-label="Apartment join code" maxlength="13" hidden />
+            <button type="submit" class="btn primary">Continue</button>
+          </form>
+        </div>
+      </div>
 
       <!-- Modal (recipe detail / new recipe) -->
       <div class="modal-overlay" id="modal-overlay" hidden>

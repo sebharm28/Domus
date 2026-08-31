@@ -2,13 +2,75 @@ DOMUS — NOTES & FEATURE GUIDE
 =============================
 
 Project notes, feature documentation, and planning discussions for Domus.
-(Filename: domus_notes.txt — formerly domus_features.txt)
+(Filename: docs/domus_notes.txt — formerly domus_features.txt)
 
 Domus is a Telegram household assistant for a shared group chat (two users,
 two apartments). Messages must start with the wake word "Domus" so the bot
 knows when to respond. The bot uses OpenRouter for natural-language intent
 parsing when an API key is set, and falls back to built-in rules otherwise.
-Data is stored locally in SQLite (data/domus.db).
+Data is stored locally in SQLite:
+  - Bot default: data/domus.db
+  - UI prototype: data/domus_ui.db (DOMUS_UI_DB env var)
+
+
+================================================================================
+DATABASES (schema reference)
+================================================================================
+
+Canonical files: src/domus/db.py (core), src/domus/food_db.py (recipes/meals)
+Init: init_storage() on server start — runs migrations wave 2–6 + food tables.
+
+UI database path: data/domus_ui.db  (override: DOMUS_UI_DB)
+Bot database path: data/domus.db     (override: DATABASE_PATH in .env)
+
+Core tables (db.py)
+-------------------
+  todos                 — shopping + tasks; apartment, assignee, quantity, due_date
+  users                 — profiles (telegram_user_id = UI user id in prototype)
+  apartments            — label PK, chat_id, join_code (13 chars), created_by_user_id
+  apartment_members     — membership: role (owner/member), status (active/pending/removed)
+  chat_context          — NLP last-todo context per chat_id
+  conversation_turns    — UI/Telegram chat history
+  memory_facts          — long-term preference facts
+  reminders             — recurring reminders
+  one_shot_reminders    — relative timers
+  chat_last_action      — undo stack
+  notification_chats    — Telegram subscription registry
+  kitchen_notes         — sticky notes per apartment
+  bath_cleaning_done    — weekly checklist ticks
+  bath_towels           — towel use / wash log
+  apartment_cleaning_chores — shared cleaning plan per apartment
+  apartment_cleaning_log    — who marked a chore done and when
+
+Food & meal tables (food_db.py)
+-------------------------------
+  foods                 — recipe book
+  meal_history          — recently eaten (suggestion dedup)
+  meal_plans            — calendar plan: UNIQUE(apartment, day), 6-week retention
+
+Scoping rules
+-------------
+  Apartment string + chat_id (≥100 for UI apartments) isolate:
+    chat history, tasks (not shopping), kitchen notes, bath hub, meal plans
+  Shopping list: household-wide (no apartment filter) — by design today
+
+Migrations
+----------
+  Inline in db.py: _migrate_wave2 … _migrate_wave6
+  food_db: _migrate_foods, _migrate_meal_plans_apartment
+  No Alembic — migrations must stay idempotent (IF NOT EXISTS / column checks)
+
+Tests
+-----
+  PYTHONPATH=src python -m unittest discover -s tests
+  Database smoke tests: tests/test_databases.py
+
+Known DB pitfalls (Aug 2026)
+----------------------------
+  - ui/server.py must import domus.db (was missing → profile create failed)
+  - Restart server after schema changes so init_storage runs
+  - meal_plans were global (no apartment) — fixed; old rows backfilled to first apt
+  - Plans older than 6 calendar weeks are pruned on read/write per apartment
 
 
 HOW TO TALK TO DOMUS
@@ -415,7 +477,7 @@ Recommended approach (when we pick it up)
 
 What stays English for now (explicit)
 -------------------------------------
-  - Code, logs, commit messages, domus_notes.txt (dev docs).
+  - Code, logs, commit messages, docs/domus_notes.txt (dev docs).
   - Bot replies and /help examples until Phase B.
   - You may still write Domus in English in Telegram — rules cover that today.
   - Mixed DE/EN in one household is OK short-term; document preferred habit.
@@ -428,7 +490,7 @@ Status: **deprecated — not pursuing.** We are building our own Domus UI for
 shopping, tasks, meals, and reminders. Telegram remains a test harness for NLP
 and rule-based handling only.
 
-Bring! was considered as an optional shopping mirror (see app_discussion.txt for
+Bring! was considered as an optional shopping mirror (see docs/app_discussion.txt for
 historical API notes). That path is closed unless requirements change.
 
 Current architecture target:
@@ -440,7 +502,7 @@ Current architecture target:
 ================================================================================
 BRING! APP & DOMUS HOUSEHOLD APP (historical discussion — Aug 2026)
 ================================================================================
-Status: **superseded — see DEPRECATED section above.** Full notes in app_discussion.txt.
+Status: **superseded — see DEPRECATED section above.** Full notes in docs/app_discussion.txt.
 
 We previously used Bring! as our native shopping-list UI (fast check-off in the store, shared
 household list). Domus handles NLP, meals, reminders, and tasks via Telegram.
@@ -571,7 +633,7 @@ Prototype sketch (when ready):
 
 REFERENCES
 ----------
-  app_discussion.txt (full discussion thread)
+  docs/app_discussion.txt (full discussion thread)
   bring-api: https://github.com/miaucl/bring-api
   Home Assistant: https://www.home-assistant.io/integrations/bring/
   Bring! product: https://www.getbring.com/
@@ -617,7 +679,7 @@ Things the bot can build once you have a preference — no rush:
 
   Bring! sync & Domus app (#app-discussion) — **Bring deprecated; own UI is the path**
     - See section "BRING! APP & DOMUS HOUSEHOLD APP" above
-    - Full thread: app_discussion.txt
+    - Full thread: docs/app_discussion.txt
     - Decision deferred — no implementation until household agrees on sync model
 
 
@@ -714,10 +776,15 @@ Domus UI (Aug 2026)
   [x] Reminders panel — recurring + pending timers (API + chat)
   [x] NLP wired to UI — POST /api/message → handle_user_message → SQLite
   [x] Chat history — conversation_turns in SQLite, GET /api/chat/history
-  [x] Kitchen hub — recipe book, egg timer (6 / 7 / 10 min presets)
-  [x] Bath hub — shower timer (5 / 10 / 15 min), toothbrush timer (2 min)
-  [ ] Kitchen unit converter, scratch notes (placeholders in UI)
-  [ ] Bath cleaning checklist, towel laundry, medicine cabinet (placeholders)
+  [x] Kitchen hub — recipe book, unit converter, shared sticky notes, egg timer (soft 5 / custom), meal planner
+  [x] Bath hub — shower/toothbrush timers, cleaning checklist, towel laundry, medicine cabinet
+  [x] Timer done notification — sound, vibration, browser Notification
+  [x] Edit profile in UI — diet, allergies, likes, dislikes (Household → Edit)
+  [x] Apartment leave + regenerate join code + pending badge on Household tab
+  [x] Stats filters — by person and apartment (7-day task completions)
+  [x] Settings panel — briefing hours, quiet hours (read-only from .env)
+  [x] Shared cleaning plan — Household sub-app, chores + assign + overdue
+  [ ] "What can I cook now?" from pantry (WIP tile)
   [ ] Recipe edit via chat (deferred)
   [ ] Native mobile / macOS app (future)
 
@@ -803,6 +870,6 @@ daily_briefing,
 help, greeting, thanks
 
 
-Last updated: 26 August 2026 (Kitchen + Bath hubs, countdown timers)
+Last updated: 31 August 2026 (Household UI polish, cleaning plan, profile edit)
 Branch: cursor/todo-list-openrouter-sqlite
-Related: app_discussion.txt, log_discussion.md
+Related: docs/apartment_discussion.txt, docs/app_discussion.txt, docs/log_discussion.md
