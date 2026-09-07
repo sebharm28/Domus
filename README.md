@@ -17,15 +17,21 @@ Telegram household assistant for a shared group chat. See [domus_dev_brief.md](.
 cp .env.example .env
 ```
 
-Fill in at least `TELEGRAM_BOT_TOKEN`. Add `OPENROUTER_API_KEY` from [openrouter.ai/keys](https://openrouter.ai/keys) for smarter intent parsing. Without it, basic list commands still work via built-in rules.
+Fill in at least `TELEGRAM_BOT_TOKEN` for the bot. For the **web UI**, add `OPENROUTER_API_KEY` from [openrouter.ai/keys](https://openrouter.ai/keys) — enables smarter chat when built-in rules don't match. Without it, basic list and meal commands still work via rules.
 
-**Can't find `.env` in Finder?** Files starting with `.` are hidden on macOS. In Finder, press **Cmd + Shift + .** to show hidden files. Or open it directly:
+### 3. Run the web UI (recommended product surface)
 
 ```bash
-open -a TextEdit ~/Projects/domus/.env
+cd ~/Projects/domus
+source .venv/bin/activate
+PYTHONPATH=src python ui/server.py    # http://127.0.0.1:8765
 ```
 
-### 3. Run the bot
+Open in browser → Home tab for natural-language chat. Check **Household → Settings** for OpenRouter status.
+
+Default household (empty DB): **Sebastian** @ **Karl-Marx-Allee 5**, password **`test1234`**.
+
+### 4. Run the Telegram bot (optional test harness)
 
 ```bash
 cd ~/Projects/domus

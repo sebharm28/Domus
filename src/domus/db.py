@@ -279,6 +279,44 @@ def init_db(db_path: Path) -> None:
         _migrate_wave5(conn)
         _migrate_wave6(conn)
         _migrate_wave7(conn)
+        _migrate_wave8(conn)
+
+
+def _migrate_wave8(conn: sqlite3.Connection) -> None:
+    apt_columns = {row["name"] for row in conn.execute("PRAGMA table_info(apartments)")}
+    if "invite_token" not in apt_columns:
+        conn.execute("ALTER TABLE apartments ADD COLUMN invite_token TEXT")
+    if "password_hash" not in apt_columns:
+        conn.execute("ALTER TABLE apartments ADD COLUMN password_hash TEXT")
+    if "household_name" not in apt_columns:
+        conn.execute("ALTER TABLE apartments ADD COLUMN household_name TEXT")
+
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS device_sessions (
+            token TEXT PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            apartment_label TEXT NOT NULL,
+            device_label TEXT,
+            created_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS household_otps (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            apartment_label TEXT NOT NULL,
+            code TEXT NOT NULL,
+            purpose TEXT NOT NULL DEFAULT 'join',
+            expires_at TEXT NOT NULL,
+            created_by_user_id INTEGER,
+            used_at TEXT,
+            used_by_user_id INTEGER
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_apartments_invite_token
+            ON apartments(invite_token) WHERE invite_token IS NOT NULL;
+        """
+    )
 
 
 def _migrate_wave5(conn: sqlite3.Connection) -> None:

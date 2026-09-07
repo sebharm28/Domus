@@ -1,6 +1,6 @@
 DOMUS — FEATURE CATALOG
 =======================
-Last updated: 2026-08-30
+Last updated: 2026-09-06
 
 Plain-text overview of everything Domus can do today, plus what is planned.
 For backlog detail see docs/domus_notes.txt and docs/app_todo.txt.
@@ -126,10 +126,16 @@ Apartment → chat mapping (UI)
   - Todos scoped by apartment label on the profile
   - First real test user: Sebastian @ Karl-Marx-Allee 5
 
-UI profile picker
-  - First launch: pick or create profile (name + apartment required)
-  - Profile chip in header; switch profile → reload chat, todos, reminders
-  - user_id persisted in localStorage on this device
+UI profile picker / entity switcher
+  - First launch: create household, join with invite link, or log in as existing member
+  - Entity chip in header — switch (household, member) pairs saved on this device
+  - Session tokens (Bearer) + legacy user_id fallback
+  - Household password or 15-min OTP to join / log in on new device
+  - Default seed: Sebastian @ Karl-Marx-Allee 5, password test1234 (empty DB)
+
+Legacy UI profile picker (v1, superseded)
+  - Pick or create profile (name + apartment)
+  - user_id persisted in localStorage
 
 
 ================================================================================
@@ -141,9 +147,12 @@ Wake word
   - UI: optional leading "Domus" stripped before routing
 
 Rules-first routing
-  - Built-in regex/rules handle known intents
-  - OpenRouter only when rules return unknown (if API key set)
+  - Built-in regex/rules handle known intents (add to list, suggest meal, …)
+  - OpenRouter only when rules return unknown (if OPENROUTER_API_KEY in .env)
   - Default model: meta-llama/llama-3.2-3b-instruct
+  - UI: Home tab composer → POST /api/message → same brain as Telegram bot
+  - Household → Settings shows OpenRouter on/off + model name (read-only)
+  - Restart ui/server.py after editing .env
 
 Private mode
   - /private prefix or reply-to-bot → rules-only, no OpenRouter that turn
@@ -216,29 +225,23 @@ Reminders panel (Household)
   - Recurring reminders + pending/recent timers
   - Remove recurring / cancel timer from UI
 
-API (ui/server.py — stdlib HTTP, no extra deps)
-  - GET  /api/todos?user_id=
-  - GET  /api/reminders?user_id=
-  - GET  /api/chat/history?user_id=
-  - GET  /api/briefing?user_id=
-  - GET  /api/profiles, /api/recipes, /api/settings, /api/stats
-  - GET  /api/meal-plan?user_id=, /api/kitchen-notes?user_id=
-  - GET  /api/bath/cleaning|towels|medicine?user_id=
-  - POST /api/message, /api/todos/add, /api/todos/toggle, /api/todos/remove, /api/todos/quantity
-  - GET  /api/apartment?user_id=
-  - POST /api/profiles/register (mode: create|join)
-  - GET  /api/stats?person=&apartment=
-  - POST /api/profiles/update
-  - POST /api/apartment/leave, /api/apartment/regenerate-code
-  - GET  /api/cleaning-plan?user_id=
-  - POST /api/cleaning-plan/done|add|assign
-  - POST /api/reminders/remove, /api/reminders/cancel-timer
-  - POST /api/recipes/add, /api/recipes/update, /api/recipes/delete, /api/recipes/plan
-  - POST /api/meal-plan/set|clear|suggest|auto
-  - POST /api/kitchen-notes/create|update|delete
-  - POST /api/bath/cleaning/toggle, /api/bath/towels/use|washed, /api/bath/medicine/add|delete
+API (ui/server.py — stdlib HTTP + python-dotenv via domus.config)
+  - GET  /api/todos, /api/reminders, /api/chat/history, /api/briefing, /api/settings
+  - GET  /api/profiles, /api/recipes, /api/stats, /api/meal-plan, /api/kitchen-notes
+  - GET  /api/bath/cleaning|towels|medicine, /api/apartment, /api/cleaning-plan
+  - GET  /api/household/export?anonymize=0|1, /api/auth/invite?token=
+  - POST /api/message — natural language (rules + OpenRouter fallback)
+  - POST /api/auth/create-household, /api/auth/join, /api/auth/login, /api/auth/entities
+  - POST /api/household/import, generate-otp, set-password, regenerate-invite
+  - POST /api/household/transfer-admin, rename-member
+  - POST /api/todos/add|toggle|remove|quantity, /api/profiles/register|update
+  - POST /api/apartment/accept|kick|leave|regenerate-code
+  - POST /api/cleaning-plan/done|add|assign, /api/reminders/remove|cancel-timer
+  - POST /api/recipes/*, /api/meal-plan/*, /api/kitchen-notes/*, /api/bath/*
+  - Auth: Authorization: Bearer <session_token> or JSON session_token / user_id
 
 Run: PYTHONPATH=src python ui/server.py → http://127.0.0.1:8765
+Env: OPENROUTER_API_KEY in repo-root .env (loaded automatically)
 
 
 ================================================================================
@@ -265,16 +268,17 @@ Storage
     kitchen_notes, bath_*, …
   - UI DB: data/domus_ui.db — see docs/domus_notes.txt DATABASES section
 
-Apartment membership
-  - 13-character join code per apartment
-  - Create or join on profile setup; owner accepts pending members
-  - Leave apartment, regenerate code (owner), pending count badge on tab
-  - See docs/apartment_discussion.txt
+Apartment / household membership
+  - v2 (Sep 2026): household account, invite link, password/OTP, entity switcher
+  - v1: 13-character join code, owner accepts pending members (legacy)
+  - Export/import JSON with optional anonymized history
+  - See docs/apartment_discussion.txt and docs/domus_notes.txt (USER HIERARCHY v2)
 
 Household UI
+  - Entity switcher, invite link, OTP, export/import, transfer admin
   - Edit profile (diet, allergies, likes, dislikes)
   - Stats filtered by person / apartment
-  - Settings read-only (briefing + quiet hours from .env)
+  - Settings: briefing, quiet hours, **OpenRouter status** (from .env)
   - Shared cleaning plan sub-app (chores, assignee, done log, overdue)
 
 Scheduler (python-telegram-bot job queue)
@@ -305,7 +309,8 @@ UI
 Platform
   [ ] macOS desktop (Tauri preferred)
   [ ] Android/iOS (React Native / Flutter over same API)
-  [ ] Auth + multi-household beyond local prototype
+  [x] Household v2 auth (sessions, invite, OTP) — local prototype
+  [ ] HTTPS + public deployment auth
   [ ] Database backup on schedule → data/backups/
 
 NLP & language
@@ -330,6 +335,8 @@ REFERENCES
 
   docs/domus_notes.txt      — detailed feature guide + backlog decisions
   docs/app_todo.txt           — living checklist with dates
+  docs/apartment_discussion.txt — household v1 + v2 membership
+  docs/log_discussion.md        — NLP log review notes
   docs/mobile_app_discussion.txt — Pi server, PWA, Tauri, scaling
   domus_dev_brief.md          — product spec (repo root)
-  ui/README.md                — UI prototype notes
+  ui/README.md                — UI prototype + OpenRouter setup

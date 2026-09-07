@@ -5,7 +5,7 @@ Discussion and roadmap for getting Domus onto macOS, Android, and iOS
 household, friends, or anyone you invite to your instance.
 
 Related: ui/README.md, docs/app_discussion.txt, docs/domus_notes.txt
-Last updated: 30 August 2026
+Last updated: 6 September 2026
 
 Audience: any household (or group of friends) running their own Domus instance —
 not tied to a fixed number of users. Scale by adding profiles, households, and

@@ -35,6 +35,17 @@ class IntentRuleTests(unittest.TestCase):
         self.assertEqual(intents[0].name, "add_todo")
         self.assertIn("milk", (intents[0].item or "").lower())
 
+    def test_greeting_hi_domus_rules(self) -> None:
+        from domus.text_utils import normalize_assistant_message
+
+        intents = _parse_with_rules(normalize_assistant_message("Hi Domus!"))
+        self.assertEqual(intents[0].name, "greeting")
+
+    def test_short_add_without_list(self) -> None:
+        intents = _parse_with_rules("add milk")
+        self.assertEqual(intents[0].name, "add_todo")
+        self.assertEqual(intents[0].category, "shopping")
+
     def test_bank_errand_with_tomorrow_in_follow_up(self) -> None:
         message = "please add going to the bank to the todo list. Have to do it tomorrow"
         intents = _parse_with_rules(message)

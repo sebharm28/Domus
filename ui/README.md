@@ -1,13 +1,9 @@
 # Domus UI (prototype)
 
-This folder is a **future-facing scaffold** for moving Domus off Telegram and
-onto its own apps (macOS desktop + Android/iOS). It is intentionally small — a
-proof of concept for the messaging + shopping-list experience, not a shipping
-app yet.
+This folder is the **primary product surface** for Domus — a web app (and future
+native wrapper) over the shared `domus.core` brain.
 
 ## Architecture
-
-The Telegram bot and this UI are two **frontends** over one shared brain:
 
 ```
                     ┌────────────────────────┐
@@ -22,60 +18,66 @@ The Telegram bot and this UI are two **frontends** over one shared brain:
      (Telegram adapter)   (HTTP + web client)  SwiftUI / React Native
 ```
 
-- `src/domus/core.py` — the stable, frontend-neutral API (`handle_user_message`,
-  `list_open_todos`, `set_todo_done`, `build_settings`). No messaging platform
-  is imported here.
-- `src/domus/telegram_bot/` — the Telegram-specific adapter (polling, handlers,
-  schedulers). Nothing else depends on it.
-- `ui/server.py` — a dependency-free (stdlib only) HTTP bridge exposing the core
-  over JSON. This is the shared backend a desktop or mobile app would call.
-- `ui/web/` — a small static web client: a chat pane + a Bring!-style shopping
-  list. Web tech keeps it portable (wrap in Tauri/Electron for desktop today,
-  and it documents the exact API a native app needs).
+- `src/domus/core.py` — `handle_user_message`, `build_settings`, storage init
+- `src/domus/household_auth.py` — household accounts, sessions, export/import
+- `ui/server.py` — stdlib HTTP bridge; loads `.env` from repo root via `domus.config`
+- `ui/web/` — six-tab PWA-style client (Home, Shopping, Tasks, Kitchen, Bath, Household)
 
 ## Run it
 
-From the repository root, with dependencies installed (see the top-level
-`README.md`):
+From the repository root (with venv activated — see top-level `README.md`):
 
 ```bash
+cp .env.example .env    # add OPENROUTER_API_KEY for smarter chat
 PYTHONPATH=src python ui/server.py           # http://127.0.0.1:8765
 PYTHONPATH=src python ui/server.py --port 9000
 ```
 
-Then open the printed URL in a browser. Try:
+### Natural language (Home tab)
 
-- `Domus, add milk and eggs to the list`
-- `add 2 milk to the list`
-- `what's on the list?`
-- `remind us every Tuesday to take out the trash`
+Chat messages go to `POST /api/message` → `handle_user_message` → SQLite.
 
-Tap a shopping tile to check it off (Bring!-style).
+- **Rules first** — "add milk", "what's on the list?", "what should we cook?" work without LLM
+- **OpenRouter fallback** — when rules don't match, if `OPENROUTER_API_KEY` is set in `.env`
+- **Check status** — Household → Settings shows "OpenRouter: On/Off" and model name
+- **Restart** `ui/server.py` after editing `.env`
+
+Try in the Home composer:
+
+- `add milk and eggs to the list`
+- `what's on today?`
+- `what should we cook for dinner tonight?`
+
+### Household auth (v2)
+
+- Entity switcher in header (create / join / log in)
+- Default seed (empty DB): **Sebastian** @ **Karl-Marx-Allee 5**, password **`test1234`**
+- Invite links, OTP, export/import — see `docs/domus_notes.txt`
 
 ### Configuration
 
-- `DOMUS_UI_DB` — SQLite path (defaults to `data/domus_ui.db`, separate from the
-  bot's DB so you can experiment freely). Point it at the bot's DB to share one
-  household.
-- `OPENROUTER_API_KEY` / `OPENROUTER_MODEL` — optional, for smarter intent
-  parsing. Without them the built-in rules engine still handles list/reminder
-  commands.
+| Variable | Purpose |
+|----------|---------|
+| `DOMUS_UI_DB` | SQLite path (default `data/domus_ui.db`) |
+| `OPENROUTER_API_KEY` | Smarter NL parsing (optional) |
+| `OPENROUTER_MODEL` | Override default Llama 3.2 3B instruct |
+| `BRIEFING_HOUR`, `QUIET_HOURS_*` | Scheduler settings (shown read-only in UI) |
 
-## HTTP API
+All env vars live in the **repo-root** `.env` (loaded automatically).
 
-| Method | Path                | Body                     | Returns                       |
-| ------ | ------------------- | ------------------------ | ----------------------------- |
-| GET    | `/api/todos`        | –                        | `{ "todos": [...] }`          |
-| POST   | `/api/message`      | `{ "text", "user" }`     | `{ "reply", "todos": [...] }` |
-| POST   | `/api/todos/toggle` | `{ "id", "done" }`       | `{ "todos": [...] }`          |
+## HTTP API (selected)
 
-A native SwiftUI or React Native app would talk to these same endpoints — the
-web client here is just the first consumer.
+| Method | Path | Notes |
+|--------|------|-------|
+| POST | `/api/message` | Natural language → `{ reply, todos, reminders }` |
+| GET | `/api/settings` | Includes `openrouter_configured`, `openrouter_model` |
+| POST | `/api/auth/join`, `/api/auth/login` | Household v2 |
+| GET | `/api/household/export` | JSON backup; `?anonymize=1` optional |
+
+Full list: `docs/features.txt`
 
 ## Next steps (not yet built)
 
-- Wrap `ui/web` in **Tauri** (Rust) or **Electron** for a real macOS `.app`.
-- A **React Native / Expo** or **Flutter** client for Android/iOS over the same
-  API.
-- Auth + multi-household support (today the prototype uses a single local
-  household).
+- Wrap `ui/web` in **Tauri** for macOS `.app`
+- **React Native / Expo** client over the same API
+- HTTPS + Tailscale for phone access (see `docs/mobile_app_discussion.txt`)

@@ -111,10 +111,29 @@ from domus.households import (
     regenerate_join_code,
     request_join_apartment,
 )
+from domus.household_auth import (
+    create_household_account,
+    export_household,
+    generate_household_otp,
+    household_auth_payload,
+    import_household,
+    init_household_auth,
+    join_household_new_member,
+    list_entity_sessions,
+    login_existing_entity,
+    regenerate_invite_token,
+    remove_member,
+    rename_member,
+    resolve_session,
+    set_household_password,
+    transfer_admin,
+)
 from domus.shopping import (  # noqa: E402
     effective_quantity,
     shopping_item_name,
 )
+from domus.conversation_log import ConversationLog  # noqa: E402
+from domus.memory import set_file_log  # noqa: E402
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 DEFAULT_DB = REPO_ROOT / "data" / "domus_ui.db"
@@ -123,14 +142,7 @@ USER_ID = 1
 
 # The "Domus" wake word is a Telegram group-chat affordance. In a dedicated app
 # you just talk, so we strip an optional leading "Domus" before routing.
-_WAKE_PREFIX = re.compile(r"^\s*domus\b[\s,:;.\-]*", re.IGNORECASE)
-
-
-def strip_wake_word(text: str) -> str:
-    stripped = _WAKE_PREFIX.sub("", text).strip()
-    return stripped or text.strip()
-
-SETTINGS = build_settings(database_path=Path(os.getenv("DOMUS_UI_DB", str(DEFAULT_DB))))
+from domus.text_utils import strip_wake_word
 
 
 def _user_id_from_request(path: str, body: dict | None = None) -> int:
@@ -158,6 +170,10 @@ def _week_offset_from_request(path: str) -> int:
         return 0
 
 
+def _route_path(raw_path: str) -> str:
+    return urlparse(raw_path).path
+
+
 def _session(user_id: int) -> dict:
     apartment = apartment_for_user(SETTINGS.database_path, user_id)
     chat_id = chat_id_for_user(SETTINGS.database_path, user_id)
@@ -168,6 +184,33 @@ def _session(user_id: int) -> dict:
         "chat_id": chat_id,
         "display_name": profile.display_name if profile else "You",
     }
+
+
+def _session_token_from(headers, path: str, body: dict | None = None) -> str | None:
+    auth = headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        token = auth[7:].strip()
+        if token:
+            return token
+    if body and body.get("session_token"):
+        return str(body["session_token"]).strip()
+    qs = parse_qs(urlparse(path).query)
+    if qs.get("session_token", [""])[0].strip():
+        return qs["session_token"][0].strip()
+    return None
+
+
+def _session_from_request(headers, path: str, body: dict | None = None) -> dict:
+    token = _session_token_from(headers, path, body)
+    if token:
+        resolved = resolve_session(SETTINGS.database_path, token)
+        if resolved:
+            return resolved
+    user_id = _user_id_from_request(path, body)
+    sess = _session(user_id)
+    if token:
+        sess["session_token"] = token
+    return sess
 
 
 def _todo_item_dict(todo) -> dict:
@@ -364,8 +407,57 @@ class DomusHandler(BaseHTTPRequestHandler):
 
     # ---- routes --------------------------------------------------------
     def do_GET(self) -> None:  # noqa: N802 (stdlib naming)
-        user_id = _user_id_from_request(self.path)
-        session = _session(user_id)
+        session = _session_from_request(self.headers, self.path)
+
+        if self.path.startswith("/api/household/export"):
+            apartment = session.get("apartment")
+            if not apartment:
+                self._send_json({"error": "apartment required"}, status=400)
+                return
+            qs = parse_qs(urlparse(self.path).query)
+            anonymize = qs.get("anonymize", ["0"])[0].strip().lower() in ("1", "true", "yes")
+            try:
+                bundle = export_household(
+                    SETTINGS.database_path,
+                    apartment,
+                    anonymize=anonymize,
+                    requested_by_user_id=session["user_id"],
+                )
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=400)
+                return
+            self._send_json({"export": bundle})
+            return
+
+        if self.path.startswith("/api/auth/invite"):
+            qs = parse_qs(urlparse(self.path).query)
+            token = (qs.get("token", [""])[0] or "").strip().lower()
+            if not token:
+                self._send_json({"error": "token required"}, status=400)
+                return
+            with db.connect(SETTINGS.database_path) as conn:
+                row = conn.execute(
+                    """
+                    SELECT label, household_name FROM apartments WHERE invite_token = ?
+                    """,
+                    (token,),
+                ).fetchone()
+            if not row:
+                self._send_json({"error": "unknown invite"}, status=404)
+                return
+            members = apartment_payload(SETTINGS.database_path, row["label"]).get("members", [])
+            self._send_json(
+                {
+                    "household_name": row["household_name"] or row["label"],
+                    "apartment": row["label"],
+                    "invite_token": token,
+                    "members": [
+                        {"user_id": m["user_id"], "display_name": m["display_name"]}
+                        for m in members
+                    ],
+                }
+            )
+            return
 
         if self.path.startswith("/api/todos"):
             self._send_json(_todos_api_response(session["apartment"]))
@@ -439,7 +531,7 @@ class DomusHandler(BaseHTTPRequestHandler):
             if not apartment:
                 self._send_json({"error": "apartment required"}, status=400)
                 return
-            self._send_json(apartment_payload(SETTINGS.database_path, apartment))
+            self._send_json(household_auth_payload(SETTINGS.database_path, apartment))
             return
         if self.path.startswith("/api/cleaning-plan"):
             apartment = session["apartment"]
@@ -475,11 +567,12 @@ class DomusHandler(BaseHTTPRequestHandler):
         self.send_error(404, "Not found")
 
     def do_POST(self) -> None:  # noqa: N802
-        if self.path == "/api/message":
+        path = _route_path(self.path)
+        if path == "/api/message":
             body = self._read_json()
             text = strip_wake_word((body.get("text") or "").strip())
-            user_id = _user_id_from_request(self.path, body)
-            session = _session(user_id)
+            session = _session_from_request(self.headers, self.path, body)
+            user_id = session["user_id"]
             display_name = (body.get("user") or session["display_name"]).strip() or "You"
             if not text:
                 self._send_json({"error": "empty message"}, status=400)
@@ -507,7 +600,7 @@ class DomusHandler(BaseHTTPRequestHandler):
             )
             return
 
-        if self.path == "/api/todos/toggle":
+        if path == "/api/todos/toggle":
             body = self._read_json()
             try:
                 todo_id = int(body.get("id"))
@@ -515,8 +608,8 @@ class DomusHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "invalid id"}, status=400)
                 return
             done = bool(body.get("done", True))
-            user_id = _user_id_from_request(self.path, body)
-            session = _session(user_id)
+            session = _session_from_request(self.headers, self.path, body)
+            user_id = session["user_id"]
             set_todo_done(
                 SETTINGS.database_path,
                 todo_id,
@@ -526,7 +619,7 @@ class DomusHandler(BaseHTTPRequestHandler):
             self._send_json(_todos_api_response(session["apartment"]))
             return
 
-        if self.path == "/api/todos/add":
+        if path == "/api/todos/add":
             body = self._read_json()
             name = (body.get("name") or "").strip()
             if not name:
@@ -541,8 +634,8 @@ class DomusHandler(BaseHTTPRequestHandler):
                 except (TypeError, ValueError):
                     self._send_json({"error": "invalid assigned_to_user_id"}, status=400)
                     return
-            user_id = _user_id_from_request(self.path, body)
-            session = _session(user_id)
+            session = _session_from_request(self.headers, self.path, body)
+            user_id = session["user_id"]
             display_name = (body.get("user") or session["display_name"]).strip() or "You"
             add_item(
                 SETTINGS.database_path,
@@ -557,14 +650,14 @@ class DomusHandler(BaseHTTPRequestHandler):
             self._send_json(_todos_api_response(session["apartment"]))
             return
 
-        if self.path == "/api/todos/quantity":
+        if path == "/api/todos/quantity":
             body = self._read_json()
             try:
                 todo_id = int(body.get("id"))
             except (TypeError, ValueError):
                 self._send_json({"error": "invalid id"}, status=400)
                 return
-            session = _session(_user_id_from_request(self.path, body))
+            session = _session_from_request(self.headers, self.path, body)
             todo = db.get_open_todo(SETTINGS.database_path, todo_id)
             if todo is None or todo.category != "shopping":
                 self._send_json({"error": "shopping item not found"}, status=404)
@@ -589,7 +682,117 @@ class DomusHandler(BaseHTTPRequestHandler):
             self._send_json(_todos_api_response(session["apartment"]))
             return
 
-        if self.path == "/api/profiles/register":
+        if path == "/api/auth/create-household":
+            body = self._read_json()
+            household_name = (body.get("household_name") or body.get("apartment") or "").strip()
+            admin_name = (body.get("display_name") or body.get("admin_name") or "").strip()
+            password = (body.get("password") or "").strip()
+            if not household_name or not admin_name or not password:
+                self._send_json({"error": "household_name, display_name, and password required"}, status=400)
+                return
+            try:
+                result = create_household_account(
+                    SETTINGS.database_path,
+                    household_name,
+                    admin_name,
+                    password,
+                )
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=400)
+                return
+            self._send_json(result)
+            return
+
+        if path == "/api/auth/join":
+            body = self._read_json()
+            invite_token = (body.get("invite_token") or body.get("token") or "").strip().lower()
+            display_name = (body.get("display_name") or "").strip()
+            password = (body.get("password") or "").strip() or None
+            otp = (body.get("otp") or body.get("code") or "").strip() or None
+            if not invite_token or not display_name:
+                self._send_json({"error": "invite_token and display_name required"}, status=400)
+                return
+            if not password and not otp:
+                self._send_json({"error": "password or otp required"}, status=400)
+                return
+            try:
+                result = join_household_new_member(
+                    SETTINGS.database_path,
+                    invite_token,
+                    display_name,
+                    password=password,
+                    otp=otp,
+                )
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=400)
+                return
+            self._send_json(result)
+            return
+
+        if path == "/api/auth/login":
+            body = self._read_json()
+            invite_token = (body.get("invite_token") or body.get("token") or "").strip().lower()
+            password = (body.get("password") or "").strip() or None
+            otp = (body.get("otp") or body.get("code") or "").strip() or None
+            try:
+                user_id = int(body.get("user_id"))
+            except (TypeError, ValueError):
+                self._send_json({"error": "user_id required"}, status=400)
+                return
+            if not invite_token:
+                self._send_json({"error": "invite_token required"}, status=400)
+                return
+            if not password and not otp:
+                self._send_json({"error": "password or otp required"}, status=400)
+                return
+            try:
+                result = login_existing_entity(
+                    SETTINGS.database_path,
+                    invite_token,
+                    user_id,
+                    password=password,
+                    otp=otp,
+                )
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=400)
+                return
+            self._send_json(result)
+            return
+
+        if path == "/api/auth/entities":
+            body = self._read_json()
+            tokens = body.get("session_tokens") or body.get("tokens") or []
+            if not isinstance(tokens, list):
+                self._send_json({"error": "session_tokens must be a list"}, status=400)
+                return
+            entities = list_entity_sessions(SETTINGS.database_path, [str(t) for t in tokens])
+            self._send_json({"entities": entities})
+            return
+
+        if path == "/api/household/import":
+            body = self._read_json()
+            bundle = body.get("export") or body.get("bundle")
+            admin_name = (body.get("display_name") or body.get("admin_name") or "").strip()
+            password = (body.get("password") or "").strip()
+            new_name = (body.get("household_name") or "").strip() or None
+            if not bundle or not admin_name or not password:
+                self._send_json({"error": "export bundle, display_name, and password required"}, status=400)
+                return
+            try:
+                result = import_household(
+                    SETTINGS.database_path,
+                    bundle,
+                    admin_name,
+                    password,
+                    new_household_name=new_name,
+                )
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=400)
+                return
+            self._send_json(result)
+            return
+
+        if path == "/api/profiles/register":
             body = self._read_json()
             display_name = (body.get("display_name") or "").strip()
             mode = (body.get("mode") or "create").strip().lower()
@@ -648,9 +851,9 @@ class DomusHandler(BaseHTTPRequestHandler):
             )
             return
 
-        if self.path == "/api/apartment/accept":
+        if path == "/api/apartment/accept":
             body = self._read_json()
-            session = _session(_user_id_from_request(self.path, body))
+            session = _session_from_request(self.headers, self.path, body)
             try:
                 member_id = int(body.get("member_id"))
             except (TypeError, ValueError):
@@ -672,9 +875,9 @@ class DomusHandler(BaseHTTPRequestHandler):
             self._send_json({**payload, "profiles": _profiles_payload()})
             return
 
-        if self.path == "/api/apartment/kick":
+        if path == "/api/apartment/kick":
             body = self._read_json()
-            session = _session(_user_id_from_request(self.path, body))
+            session = _session_from_request(self.headers, self.path, body)
             try:
                 member_id = int(body.get("member_id"))
             except (TypeError, ValueError):
@@ -684,11 +887,11 @@ class DomusHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "apartment required"}, status=400)
                 return
             try:
-                payload = kick_apartment_member(
+                payload = remove_member(
                     SETTINGS.database_path,
                     session["apartment"],
                     member_id,
-                    kicked_by_user_id=session["user_id"],
+                    by_user_id=session["user_id"],
                 )
             except ValueError as exc:
                 self._send_json({"error": str(exc)}, status=400)
@@ -696,9 +899,9 @@ class DomusHandler(BaseHTTPRequestHandler):
             self._send_json({**payload, "profiles": _profiles_payload()})
             return
 
-        if self.path == "/api/apartment/leave":
+        if path == "/api/apartment/leave":
             body = self._read_json()
-            session = _session(_user_id_from_request(self.path, body))
+            session = _session_from_request(self.headers, self.path, body)
             try:
                 leave_apartment(SETTINGS.database_path, session["user_id"])
             except ValueError as exc:
@@ -707,9 +910,9 @@ class DomusHandler(BaseHTTPRequestHandler):
             self._send_json({"profiles": _profiles_payload(), "left": True})
             return
 
-        if self.path == "/api/apartment/regenerate-code":
+        if path == "/api/apartment/regenerate-code":
             body = self._read_json()
-            session = _session(_user_id_from_request(self.path, body))
+            session = _session_from_request(self.headers, self.path, body)
             if not session["apartment"]:
                 self._send_json({"error": "apartment required"}, status=400)
                 return
@@ -725,9 +928,116 @@ class DomusHandler(BaseHTTPRequestHandler):
             self._send_json(payload)
             return
 
-        if self.path == "/api/profiles/update":
+        if path == "/api/household/generate-otp":
             body = self._read_json()
-            session = _session(_user_id_from_request(self.path, body))
+            session = _session_from_request(self.headers, self.path, body)
+            if not session["apartment"]:
+                self._send_json({"error": "apartment required"}, status=400)
+                return
+            try:
+                otp = generate_household_otp(
+                    SETTINGS.database_path,
+                    session["apartment"],
+                    created_by_user_id=session["user_id"],
+                    purpose=(body.get("purpose") or "join"),
+                )
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=400)
+                return
+            self._send_json(otp)
+            return
+
+        if path == "/api/household/set-password":
+            body = self._read_json()
+            session = _session_from_request(self.headers, self.path, body)
+            password = (body.get("password") or "").strip()
+            if not session["apartment"] or not password:
+                self._send_json({"error": "apartment and password required"}, status=400)
+                return
+            try:
+                set_household_password(
+                    SETTINGS.database_path,
+                    session["apartment"],
+                    password,
+                    by_user_id=session["user_id"],
+                )
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=400)
+                return
+            self._send_json({"ok": True})
+            return
+
+        if path == "/api/household/regenerate-invite":
+            body = self._read_json()
+            session = _session_from_request(self.headers, self.path, body)
+            if not session["apartment"]:
+                self._send_json({"error": "apartment required"}, status=400)
+                return
+            try:
+                payload = regenerate_invite_token(
+                    SETTINGS.database_path,
+                    session["apartment"],
+                    owner_user_id=session["user_id"],
+                )
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=400)
+                return
+            self._send_json(payload)
+            return
+
+        if path == "/api/household/transfer-admin":
+            body = self._read_json()
+            session = _session_from_request(self.headers, self.path, body)
+            try:
+                member_id = int(body.get("member_id"))
+            except (TypeError, ValueError):
+                self._send_json({"error": "member_id required"}, status=400)
+                return
+            if not session["apartment"]:
+                self._send_json({"error": "apartment required"}, status=400)
+                return
+            try:
+                payload = transfer_admin(
+                    SETTINGS.database_path,
+                    session["apartment"],
+                    from_user_id=session["user_id"],
+                    to_user_id=member_id,
+                )
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=400)
+                return
+            self._send_json(payload)
+            return
+
+        if path == "/api/household/rename-member":
+            body = self._read_json()
+            session = _session_from_request(self.headers, self.path, body)
+            new_name = (body.get("display_name") or body.get("new_name") or "").strip()
+            try:
+                member_id = int(body.get("member_id", session["user_id"]))
+            except (TypeError, ValueError):
+                self._send_json({"error": "member_id required"}, status=400)
+                return
+            if not session["apartment"] or not new_name:
+                self._send_json({"error": "apartment and display_name required"}, status=400)
+                return
+            try:
+                payload = rename_member(
+                    SETTINGS.database_path,
+                    session["apartment"],
+                    member_id,
+                    new_name,
+                    by_user_id=session["user_id"],
+                )
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=400)
+                return
+            self._send_json(payload)
+            return
+
+        if path == "/api/profiles/update":
+            body = self._read_json()
+            session = _session_from_request(self.headers, self.path, body)
             target_id = session["user_id"]
             if body.get("profile_id") is not None:
                 try:
@@ -758,9 +1068,9 @@ class DomusHandler(BaseHTTPRequestHandler):
             )
             return
 
-        if self.path == "/api/cleaning-plan/done":
+        if path == "/api/cleaning-plan/done":
             body = self._read_json()
-            session = _session(_user_id_from_request(self.path, body))
+            session = _session_from_request(self.headers, self.path, body)
             if not session["apartment"]:
                 self._send_json({"error": "apartment required"}, status=400)
                 return
@@ -780,9 +1090,9 @@ class DomusHandler(BaseHTTPRequestHandler):
             )
             return
 
-        if self.path == "/api/cleaning-plan/add":
+        if path == "/api/cleaning-plan/add":
             body = self._read_json()
-            session = _session(_user_id_from_request(self.path, body))
+            session = _session_from_request(self.headers, self.path, body)
             if not session["apartment"]:
                 self._send_json({"error": "apartment required"}, status=400)
                 return
@@ -804,9 +1114,9 @@ class DomusHandler(BaseHTTPRequestHandler):
             self._send_json(payload)
             return
 
-        if self.path == "/api/cleaning-plan/assign":
+        if path == "/api/cleaning-plan/assign":
             body = self._read_json()
-            session = _session(_user_id_from_request(self.path, body))
+            session = _session_from_request(self.headers, self.path, body)
             if not session["apartment"]:
                 self._send_json({"error": "apartment required"}, status=400)
                 return
@@ -837,25 +1147,25 @@ class DomusHandler(BaseHTTPRequestHandler):
             self._send_json(payload)
             return
 
-        if self.path == "/api/todos/remove":
+        if path == "/api/todos/remove":
             body = self._read_json()
             try:
                 todo_id = int(body.get("id"))
             except (TypeError, ValueError):
                 self._send_json({"error": "invalid id"}, status=400)
                 return
-            session = _session(_user_id_from_request(self.path, body))
+            session = _session_from_request(self.headers, self.path, body)
             delete_item(SETTINGS.database_path, todo_id)
             self._send_json(_todos_api_response(session["apartment"]))
             return
 
-        if self.path == "/api/recipes/plan":
+        if path == "/api/recipes/plan":
             body = self._read_json()
             name = (body.get("name") or "").strip()
             if not name:
                 self._send_json({"error": "empty name"}, status=400)
                 return
-            session = _session(_user_id_from_request(self.path, body))
+            session = _session_from_request(self.headers, self.path, body)
             reply = plan_recipe(
                 SETTINGS.database_path,
                 name,
@@ -864,7 +1174,7 @@ class DomusHandler(BaseHTTPRequestHandler):
             self._send_json({"reply": reply, **_todos_api_response(session["apartment"])})
             return
 
-        if self.path == "/api/recipes/add":
+        if path == "/api/recipes/add":
             body = self._read_json()
             name = (body.get("name") or "").strip()
             if not name:
@@ -892,7 +1202,7 @@ class DomusHandler(BaseHTTPRequestHandler):
             self._send_json(_recipes_response())
             return
 
-        if self.path == "/api/recipes/update":
+        if path == "/api/recipes/update":
             body = self._read_json()
             try:
                 food_id = int(body.get("id"))
@@ -923,7 +1233,7 @@ class DomusHandler(BaseHTTPRequestHandler):
             self._send_json(_recipes_response())
             return
 
-        if self.path == "/api/recipes/delete":
+        if path == "/api/recipes/delete":
             body = self._read_json()
             try:
                 food_id = int(body.get("id"))
@@ -937,9 +1247,9 @@ class DomusHandler(BaseHTTPRequestHandler):
             self._send_json({"deleted": deleted, **_recipes_response()})
             return
 
-        if self.path == "/api/kitchen-notes/create":
+        if path == "/api/kitchen-notes/create":
             body = self._read_json()
-            session = _session(_user_id_from_request(self.path, body))
+            session = _session_from_request(self.headers, self.path, body)
             if not session["apartment"]:
                 self._send_json({"error": "apartment required"}, status=400)
                 return
@@ -954,9 +1264,9 @@ class DomusHandler(BaseHTTPRequestHandler):
             self._send_json(kitchen_notes_payload(SETTINGS.database_path, session["apartment"]))
             return
 
-        if self.path == "/api/kitchen-notes/update":
+        if path == "/api/kitchen-notes/update":
             body = self._read_json()
-            session = _session(_user_id_from_request(self.path, body))
+            session = _session_from_request(self.headers, self.path, body)
             try:
                 note_id = int(body.get("id"))
             except (TypeError, ValueError):
@@ -974,9 +1284,9 @@ class DomusHandler(BaseHTTPRequestHandler):
             self._send_json(kitchen_notes_payload(SETTINGS.database_path, session["apartment"]))
             return
 
-        if self.path == "/api/kitchen-notes/delete":
+        if path == "/api/kitchen-notes/delete":
             body = self._read_json()
-            session = _session(_user_id_from_request(self.path, body))
+            session = _session_from_request(self.headers, self.path, body)
             try:
                 note_id = int(body.get("id"))
             except (TypeError, ValueError):
@@ -988,9 +1298,9 @@ class DomusHandler(BaseHTTPRequestHandler):
             self._send_json(kitchen_notes_payload(SETTINGS.database_path, session["apartment"]))
             return
 
-        if self.path == "/api/bath/cleaning/toggle":
+        if path == "/api/bath/cleaning/toggle":
             body = self._read_json()
-            session = _session(_user_id_from_request(self.path, body))
+            session = _session_from_request(self.headers, self.path, body)
             if not session["apartment"]:
                 self._send_json({"error": "apartment required"}, status=400)
                 return
@@ -1008,9 +1318,9 @@ class DomusHandler(BaseHTTPRequestHandler):
             self._send_json(payload)
             return
 
-        if self.path == "/api/bath/towels/use":
+        if path == "/api/bath/towels/use":
             body = self._read_json()
-            session = _session(_user_id_from_request(self.path, body))
+            session = _session_from_request(self.headers, self.path, body)
             label = (body.get("label") or "").strip()
             if not session["apartment"] or not label:
                 self._send_json({"error": "apartment and label required"}, status=400)
@@ -1018,9 +1328,9 @@ class DomusHandler(BaseHTTPRequestHandler):
             self._send_json(log_towel_use(SETTINGS.database_path, session["apartment"], label))
             return
 
-        if self.path == "/api/bath/towels/washed":
+        if path == "/api/bath/towels/washed":
             body = self._read_json()
-            session = _session(_user_id_from_request(self.path, body))
+            session = _session_from_request(self.headers, self.path, body)
             label = (body.get("label") or "").strip()
             if not session["apartment"] or not label:
                 self._send_json({"error": "apartment and label required"}, status=400)
@@ -1028,9 +1338,9 @@ class DomusHandler(BaseHTTPRequestHandler):
             self._send_json(log_towel_washed(SETTINGS.database_path, session["apartment"], label))
             return
 
-        if self.path == "/api/bath/medicine/add":
+        if path == "/api/bath/medicine/add":
             body = self._read_json()
-            session = _session(_user_id_from_request(self.path, body))
+            session = _session_from_request(self.headers, self.path, body)
             name = (body.get("name") or "").strip()
             if not session["apartment"] or not name:
                 self._send_json({"error": "apartment and name required"}, status=400)
@@ -1046,9 +1356,9 @@ class DomusHandler(BaseHTTPRequestHandler):
             )
             return
 
-        if self.path == "/api/bath/medicine/delete":
+        if path == "/api/bath/medicine/delete":
             body = self._read_json()
-            session = _session(_user_id_from_request(self.path, body))
+            session = _session_from_request(self.headers, self.path, body)
             try:
                 item_id = int(body.get("id"))
             except (TypeError, ValueError):
@@ -1060,9 +1370,9 @@ class DomusHandler(BaseHTTPRequestHandler):
             self._send_json(medicine_payload(SETTINGS.database_path, session["apartment"]))
             return
 
-        if self.path == "/api/meal-plan/set":
+        if path == "/api/meal-plan/set":
             body = self._read_json()
-            session = _session(_user_id_from_request(self.path, body))
+            session = _session_from_request(self.headers, self.path, body)
             day = (body.get("day") or "").strip()
             dish = (body.get("dish") or body.get("name") or "").strip()
             if not day or not dish:
@@ -1088,9 +1398,9 @@ class DomusHandler(BaseHTTPRequestHandler):
             )
             return
 
-        if self.path == "/api/meal-plan/clear":
+        if path == "/api/meal-plan/clear":
             body = self._read_json()
-            session = _session(_user_id_from_request(self.path, body))
+            session = _session_from_request(self.headers, self.path, body)
             day = (body.get("day") or "").strip()
             if not day:
                 self._send_json({"error": "day required"}, status=400)
@@ -1110,9 +1420,9 @@ class DomusHandler(BaseHTTPRequestHandler):
             )
             return
 
-        if self.path == "/api/meal-plan/suggest":
+        if path == "/api/meal-plan/suggest":
             body = self._read_json()
-            session = _session(_user_id_from_request(self.path, body))
+            session = _session_from_request(self.headers, self.path, body)
             day = (body.get("day") or "").strip()
             if not day:
                 self._send_json({"error": "day required"}, status=400)
@@ -1138,9 +1448,9 @@ class DomusHandler(BaseHTTPRequestHandler):
             )
             return
 
-        if self.path == "/api/meal-plan/auto":
+        if path == "/api/meal-plan/auto":
             body = self._read_json()
-            session = _session(_user_id_from_request(self.path, body))
+            session = _session_from_request(self.headers, self.path, body)
             week = int(body.get("week_offset", 0) or 0)
             profiles = list_profiles(SETTINGS.database_path)
             planned, missing = plan_calendar_week(
@@ -1161,7 +1471,7 @@ class DomusHandler(BaseHTTPRequestHandler):
             self._send_json(payload)
             return
 
-        if self.path == "/api/reminders/remove":
+        if path == "/api/reminders/remove":
             body = self._read_json()
             try:
                 reminder_id = int(body.get("id"))
@@ -1172,7 +1482,7 @@ class DomusHandler(BaseHTTPRequestHandler):
             if removed is None:
                 self._send_json({"error": "reminder not found"}, status=404)
                 return
-            session = _session(_user_id_from_request(self.path, body))
+            session = _session_from_request(self.headers, self.path, body)
             self._send_json(
                 {
                     "removed": removed.text,
@@ -1184,7 +1494,7 @@ class DomusHandler(BaseHTTPRequestHandler):
             )
             return
 
-        if self.path == "/api/reminders/cancel-timer":
+        if path == "/api/reminders/cancel-timer":
             body = self._read_json()
             try:
                 timer_id = int(body.get("id"))
@@ -1195,7 +1505,7 @@ class DomusHandler(BaseHTTPRequestHandler):
             if cancelled is None:
                 self._send_json({"error": "timer not found"}, status=404)
                 return
-            session = _session(_user_id_from_request(self.path, body))
+            session = _session_from_request(self.headers, self.path, body)
             self._send_json(
                 {
                     "cancelled": cancelled.text,
@@ -1214,18 +1524,42 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run the Domus UI backend.")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument(
+        "--no-chat-log",
+        action="store_true",
+        help="Disable append-only logs/ui_session_*.log (on by default for NLP testing)",
+    )
     args = parser.parse_args()
 
     init_storage(SETTINGS.database_path)
-    init_households(SETTINGS.database_path)
+    init_household_auth(SETTINGS.database_path)
+
+    chat_log: ConversationLog | None = None
+    if not args.no_chat_log and os.getenv("DOMUS_CHAT_LOG", "true").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    ):
+        log_dir = REPO_ROOT / "logs" / "ui"
+        chat_log = ConversationLog(log_dir=log_dir)
+        chat_log._write("# Domus UI chat log — user message -> Domus reply (+ parsed intents)")
+        set_file_log(chat_log)
+
     server = ThreadingHTTPServer((args.host, args.port), DomusHandler)
     print(f"Domus UI running at http://{args.host}:{args.port}  (db: {SETTINGS.database_path})")
+    if chat_log:
+        print(f"Chat log: {chat_log.path}")
     print("Press Ctrl+C to stop.")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("\nShutting down.")
         server.shutdown()
+    finally:
+        if chat_log is not None:
+            chat_log.close()
+            set_file_log(None)
 
 
 if __name__ == "__main__":

@@ -78,5 +78,50 @@ class NlpPolishTests(unittest.TestCase):
         self.assertIn("water plants", reply)
 
 
+    def test_greeting_hi_domus(self) -> None:
+        from domus.intents import _parse_social_intents, _parse_with_rules
+        from domus.text_utils import normalize_assistant_message
+
+        for message in ("Hi Domus!", "Hey Domus", "thanks Domus", "hello there"):
+            normalized = normalize_assistant_message(message).lower()
+            social = _parse_social_intents(normalized)
+            self.assertIsNotNone(social, message)
+            rules = _parse_with_rules(normalize_assistant_message(message))
+            self.assertNotEqual(rules[0].name, "unknown", message)
+
+    def test_short_add_milk(self) -> None:
+        intents = _parse_with_rules("add milk")
+        self.assertEqual(intents[0].name, "add_todo")
+        self.assertIn("milk", (intents[0].item or "").lower())
+        self.assertEqual(intents[0].category, "shopping")
+
+    def test_hi_domus_via_parse_intents(self) -> None:
+        from domus.intents import parse_intents
+        from domus.config import Settings
+        from pathlib import Path
+
+        settings = Settings(
+            telegram_bot_token="test",
+            openrouter_api_key=None,
+            openrouter_model="test",
+            database_path=Path("data/unused.db"),
+            briefing_hour=8,
+            evening_briefing_hour=20,
+            quiet_hours_enabled=False,
+            quiet_hours_start=22,
+            quiet_hours_end=7,
+            redaction_enabled=False,
+            redaction_patterns=(),
+        )
+
+        async def run() -> None:
+            intents = await parse_intents("Hi Domus!", settings)
+            self.assertEqual(intents[0].name, "greeting")
+
+        import asyncio
+
+        asyncio.run(run())
+
+
 if __name__ == "__main__":
     unittest.main()

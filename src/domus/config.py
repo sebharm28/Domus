@@ -4,9 +4,9 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(PROJECT_ROOT / ".env")
+
 DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "domus.db"
 DEFAULT_OPENROUTER_MODEL = "meta-llama/llama-3.2-3b-instruct"
 DEFAULT_BRIEFING_HOUR = 8

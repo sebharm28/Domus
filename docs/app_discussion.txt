@@ -1,7 +1,7 @@
 DOMUS × BRING! — DISCUSSION NOTES
 ==================================
 Started: 25 August 2026
-Updated: 26 August 2026 — **DEPRECATED**
+Updated: 26 August 2026 — **DEPRECATED** (see ui/README.md for current product)
 Author: Sebastian (+ assistant notes)
 
 **Decision (26 Aug 2026): Bring! integration is deprecated.** We are building our

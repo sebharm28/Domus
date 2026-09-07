@@ -100,6 +100,136 @@ class DatabaseSmokeTests(unittest.TestCase):
         )
         self.assertEqual(entries, [])
 
+    def test_household_auth_create_join_login(self) -> None:
+        from domus.household_auth import (
+            create_household_account,
+            generate_household_otp,
+            join_household_new_member,
+            login_existing_entity,
+            resolve_session,
+        )
+
+        created = create_household_account(
+            self.db_path,
+            "Auth Test Home",
+            "Admin",
+            "secret123",
+        )
+        self.assertTrue(created["session_token"])
+        self.assertEqual(len(created["invite_token"]), 32)
+
+        sess = resolve_session(self.db_path, created["session_token"])
+        self.assertIsNotNone(sess)
+        self.assertEqual(sess["display_name"], "Admin")
+
+        joined = join_household_new_member(
+            self.db_path,
+            created["invite_token"],
+            "Roomie",
+            password="secret123",
+        )
+        self.assertEqual(joined["profile"]["display_name"], "Roomie")
+
+        login = login_existing_entity(
+            self.db_path,
+            created["invite_token"],
+            joined["profile"]["id"],
+            password="secret123",
+        )
+        self.assertNotEqual(login["session_token"], joined["session_token"])
+
+        otp = generate_household_otp(
+            self.db_path,
+            "Auth Test Home",
+            created_by_user_id=created["profile"]["id"],
+        )
+        self.assertEqual(len(otp["code"]), 6)
+
+    def test_household_export_import_anonymize(self) -> None:
+        from domus.household_auth import (
+            create_household_account,
+            export_household,
+            import_household,
+            join_household_new_member,
+        )
+        from domus import db as db_mod
+
+        created = create_household_account(self.db_path, "Export Apt", "Sebastian", "pass1234")
+        apt = created["household"]["apartment"]
+        admin_id = created["profile"]["id"]
+        join_household_new_member(
+            self.db_path,
+            created["invite_token"],
+            "Alex",
+            password="pass1234",
+        )
+        db_mod.add_todo(
+            self.db_path,
+            "Test task",
+            created_by="Sebastian",
+            category="general",
+            apartment=apt,
+            created_by_user_id=admin_id,
+        )
+
+        bundle = export_household(
+            self.db_path,
+            apt,
+            anonymize=True,
+            requested_by_user_id=admin_id,
+        )
+        self.assertTrue(bundle["anonymized"])
+        self.assertTrue(any(m["display_name"].startswith("Member") for m in bundle["members"]))
+
+        imported = import_household(
+            self.db_path,
+            bundle,
+            "Sebastian",
+            "newpass1",
+            new_household_name="Export Apt Copy",
+        )
+        self.assertEqual(imported["profile"]["display_name"], "Sebastian")
+        self.assertIn("session_token", imported)
+
+    def test_consolidate_duplicate_household_members(self) -> None:
+        from domus.household_auth import (
+            consolidate_duplicate_household_members,
+            create_device_session,
+            create_household_account,
+            prune_orphan_users,
+        )
+
+        created = create_household_account(self.db_path, "Dup Apt", "Sebastian", "pass1234")
+        apt = created["household"]["apartment"]
+        keep_id = created["profile"]["id"]
+        db.upsert_user_profile(self.db_path, keep_id + 1, "Sebastian")
+        now = db.connect(self.db_path)
+        with now as conn:
+            conn.execute(
+                """
+                INSERT INTO apartment_members
+                    (apartment_label, user_id, role, status, requested_at, joined_at)
+                VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
+                """,
+                (apt, keep_id + 1, "owner", MEMBER_ACTIVE),
+            )
+        create_device_session(self.db_path, keep_id + 1, apt)
+        db.upsert_user_profile(self.db_path, keep_id + 2, "Sebastian")
+        prune_orphan_users(self.db_path)
+
+        kept = consolidate_duplicate_household_members(self.db_path, apt)
+        self.assertEqual(kept, keep_id + 1)
+        payload = apartment_payload(self.db_path, apt)
+        self.assertEqual(len(payload["members"]), 1)
+        self.assertEqual(payload["members"][0]["display_name"], "Sebastian")
+
+    def test_create_household_rejects_duplicate_name(self) -> None:
+        from domus.household_auth import create_household_account
+
+        create_household_account(self.db_path, "Unique Apt", "Sebastian", "pass1234")
+        with self.assertRaises(ValueError):
+            create_household_account(self.db_path, "Unique Apt", "Alex", "pass5678")
+
 
 if __name__ == "__main__":
     unittest.main()

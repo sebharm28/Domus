@@ -30,7 +30,8 @@ Core tables (db.py)
   apartments            — label PK, chat_id, join_code (13 chars), created_by_user_id
   apartment_members     — membership: role (owner/member), status (active/pending/removed)
   chat_context          — NLP last-todo context per chat_id
-  conversation_turns    — UI/Telegram chat history
+  conversation_turns    — UI/Telegram chat history (SQLite; intent_json on user turns)
+  logs/ui/session_*.log — UI chat file log while testing (intents included)
   memory_facts          — long-term preference facts
   reminders             — recurring reminders
   one_shot_reminders    — relative timers
@@ -782,11 +783,97 @@ Domus UI (Aug 2026)
   [x] Edit profile in UI — diet, allergies, likes, dislikes (Household → Edit)
   [x] Apartment leave + regenerate join code + pending badge on Household tab
   [x] Stats filters — by person and apartment (7-day task completions)
-  [x] Settings panel — briefing hours, quiet hours (read-only from .env)
+  [x] Settings panel — briefing hours, quiet hours, OpenRouter status (from .env)
   [x] Shared cleaning plan — Household sub-app, chores + assign + overdue
   [ ] "What can I cook now?" from pantry (WIP tile)
   [ ] Recipe edit via chat (deferred)
   [ ] Native mobile / macOS app (future)
+
+
+USER HIERARCHY & ARCHITECTURE (v2 — Sep 2026)
+---------------------------------------------
+Status: **implemented in UI prototype** — household accounts with member entities.
+
+### Model
+
+```
+Household account (= apartment row in SQLite)
+├── admin (first member entity, role=owner)
+├── member entities (display names in users table — not email accounts)
+├── invite link (?invite=<token>) + household password and/or OTP
+└── scoped data: tasks, meal plans, kitchen/bath/cleaning notes
+
+Device session (Bearer token)
+├── household (apartment label)
+├── member entity (user_id)
+└── entity switcher: multiple (household, entity) pairs per device
+```
+
+### Flows
+
+- **Create household** — name + admin name + password → session token
+- **Join (new member)** — invite link + name + password or OTP → active immediately (no pending)
+- **Log in (existing entity, new device)** — invite link + pick member + password or OTP
+- **Entity switcher** — switch which member/household this device acts as
+
+### Admin powers
+
+- Rename / remove members (removes their device sessions)
+- Regenerate invite link and legacy 13-char join code
+- Transfer admin; auto-promote sole remaining member when admin leaves
+- Generate 15-minute OTP for join/login
+- Set household password
+
+### Export / import (breakup / move-out)
+
+- Any **active member** can export household data (JSON download)
+- **Anonymize** optional at export time — replaces names in “who did what” history
+- **Import** creates a **new** household; importer becomes admin + picks their entity name
+
+### Seed (empty DB)
+
+- Default household: **Karl-Marx-Allee 5**, admin **Sebastian**, password **`test1234`** (reset on server start for this seed household; change via Household tab → set password)
+
+### Legacy (v1, still in DB)
+
+- 13-char join codes, pending approval via owner accept — superseded by OTP/password join
+- `users.telegram_user_id` still used as entity id in prototype
+
+Open questions:
+  [ ] Telegram bot identity bridge (real telegram_user_id vs UI ids)
+  [ ] Per-entity PIN for second device (optional extra layer)
+  [ ] Shopping vs tasks scoping across multiple households on one device
+
+Related: docs/apartment_discussion.txt (join flow v1), DATABASES section above.
+
+
+USER HIERARCHY & ARCHITECTURE (discussion — TBD, superseded)
+------------------------------------------------
+Status: **not finalised** — revisit when scaling beyond the local prototype.
+
+Current model (Aug 2026):
+  - **Household** — one SQLite DB; shopping list is household-wide today
+  - **Apartment** — scoped chat, tasks, notes, meal plans, bath/cleaning data
+    · label (text PK) + chat_id (≥100 in UI) + 13-char join_code
+  - **Profile** — users table; telegram_user_id doubles as UI user_id in prototype
+  - **Membership** — apartment_members: role (owner | member),
+    status (active | pending | removed)
+  - **Owner powers** — accept/kick members, regenerate join code
+  - **Member** — leave apartment; join via code → pending until accepted
+
+Open questions (to discuss later):
+  [ ] Hierarchy depth — household → apartment → room/user only, or more levels?
+  [ ] Who can approve joins — owner only vs any active member vs unanimous?
+  [ ] Multiple owners / co-owner transfer when someone moves out
+  [ ] Self-leave vs kick; what happens to assigned tasks and cleaning chores
+  [ ] UI user_id (1, 2, 3…) vs real Telegram IDs when bot + UI share one DB
+  [ ] Auth beyond “trust this device” — **partial v2**: session tokens + household password/OTP; HTTPS TBD
+  [ ] Cross-apartment users — one person in two apartments (e.g. two addresses)
+  [ ] Shopping vs tasks scoping — keep shopping household-wide or per apartment?
+  [ ] Admin / Domus system user — @Domus mentions vs a real service account
+  [ ] Permissions matrix — who can edit recipes, meal plan, apartment settings?
+
+Related: docs/apartment_discussion.txt (join flow v1), DATABASES section above.
 
 
 Voice (deferred)
@@ -870,6 +957,6 @@ daily_briefing,
 help, greeting, thanks
 
 
-Last updated: 31 August 2026 (Household UI polish, cleaning plan, profile edit)
+Last updated: 6 September 2026 (household account v2 auth)
 Branch: cursor/todo-list-openrouter-sqlite
 Related: docs/apartment_discussion.txt, docs/app_discussion.txt, docs/log_discussion.md

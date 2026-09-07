@@ -35,6 +35,7 @@ async def route_message(
         display_name,
         chat_id=chat_id,
         telegram_user_id=telegram_user_id,
+        user_text=text,
     )
     record_exchange(
         settings.database_path,
@@ -44,8 +45,9 @@ async def route_message(
         assistant_text=reply,
         intents=intents,
         private_mode=private_mode,
+        display_name=display_name,
     )
-    if private_mode and reply.startswith("I didn't understand"):
+    if private_mode and reply.startswith("I'm not sure"):
         return (
             f"{reply}\n\n(Private mode: I only use local rules here, not OpenRouter.)"
         )

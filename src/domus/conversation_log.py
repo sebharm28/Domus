@@ -24,13 +24,30 @@ class ConversationLog:
         self._file = self.path.open("a", encoding="utf-8")
         self._write(f"# Session started {self.started_at:%Y-%m-%d %H:%M:%S}")
 
-    def log_exchange(self, user_name: str, user_message: str, bot_reply: str) -> None:
+    def log_exchange(
+        self,
+        user_name: str,
+        user_message: str,
+        bot_reply: str,
+        *,
+        apartment: str | None = None,
+        chat_id: int | None = None,
+        intents_json: str | None = None,
+    ) -> None:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        meta = []
+        if apartment:
+            meta.append(f"apt={apartment}")
+        if chat_id is not None:
+            meta.append(f"chat={chat_id}")
+        meta_suffix = f" [{', '.join(meta)}]" if meta else ""
         line = (
-            f"{timestamp}, {_sanitize(user_message)} ({user_name}) - "
+            f"{timestamp}, {_sanitize(user_message)} ({user_name}){meta_suffix} -> "
             f"{_sanitize(bot_reply)} (Domus)"
         )
         self._write(line)
+        if intents_json:
+            self._write(f"  intents: {intents_json}")
 
     def close(self) -> None:
         if self._file.closed:

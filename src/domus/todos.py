@@ -193,6 +193,7 @@ def handle_intents(
     *,
     chat_id: int | None = None,
     telegram_user_id: int | None = None,
+    user_text: str | None = None,
 ) -> str:
     ordered = sorted(
         intents,
@@ -215,6 +216,17 @@ def handle_intents(
     if replies:
         return "\n".join(replies)
 
+    return _unknown_reply(user_text)
+
+
+def _unknown_reply(user_text: str | None) -> str:
+    text = (user_text or "").strip()
+    if len(text) <= 80:
+        return (
+            "I'm not sure what you mean yet. Try something like "
+            '"add milk", "what\'s on today?", or "plan dinner" — '
+            'or say "help" for more examples.'
+        )
     return (
         "I didn't understand that yet. Try:\n"
         "• add milk to the list\n"

@@ -121,6 +121,9 @@ def init_storage(db_path: Path) -> None:
     from domus.households import init_households
 
     init_households(db_path)
+    from domus.household_auth import init_household_auth
+
+    init_household_auth(db_path)
 
 
 def add_item(
@@ -189,6 +192,8 @@ def settings_payload(settings: Settings) -> dict:
         "quiet_hours_end": settings.quiet_hours_end,
         "redaction_enabled": settings.redaction_enabled,
         "redaction_patterns": list(settings.redaction_patterns),
+        "openrouter_configured": bool(settings.openrouter_api_key),
+        "openrouter_model": settings.openrouter_model,
     }
 
 

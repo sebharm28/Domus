@@ -252,7 +252,122 @@ body {
 .profile-pick-list {
   display: grid;
   gap: 8px;
+  margin-top: 4px;
+}
+
+.auth-section {
+  margin-top: 16px;
+}
+
+.auth-section:first-of-type {
   margin-top: 12px;
+}
+
+.auth-section-title {
+  margin: 0 0 8px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted, #888);
+}
+
+.auth-setup-toggle {
+  width: 100%;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 0.92rem;
+  cursor: pointer;
+}
+
+.auth-setup-toggle:hover {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.auth-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  padding: 4px;
+  border-radius: 12px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+}
+
+.auth-tab {
+  border: none;
+  border-radius: 9px;
+  padding: 10px 6px;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 500;
+  cursor: pointer;
+  background: transparent;
+  color: var(--muted, #888);
+  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.auth-tab.is-active {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+}
+
+.auth-mode-hint {
+  margin: 10px 0 12px;
+  min-height: 2.5em;
+}
+
+.auth-panel {
+  display: grid;
+  gap: 6px;
+}
+
+.auth-panel[hidden] {
+  display: none !important;
+}
+
+.field-label {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--muted, #888);
+  margin-top: 4px;
+}
+
+.field-label:first-child {
+  margin-top: 0;
+}
+
+.auth-or {
+  margin: 4px 0;
+  text-align: center;
+  font-size: 0.82rem;
+  color: var(--muted, #888);
+}
+
+.profile-new-form select {
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+}
+
+.auth-submit {
+  margin-top: 14px;
+  width: 100%;
+}
+
+.profile-pick-list .empty {
+  margin: 0;
+  font-size: 0.92rem;
 }
 
 .profile-pick-btn {
@@ -279,11 +394,10 @@ body {
 }
 
 .profile-new-form {
-  display: grid;
-  gap: 10px;
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--line);
+  display: block;
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
 }
 
 .profile-new-form input {
@@ -297,24 +411,73 @@ body {
 }
 
 .profile-mode-row {
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
+  display: none;
 }
 
-.profile-mode-option {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.auth-footer {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  text-align: center;
+}
+
+.auth-footer .btn.link {
   font-size: 0.92rem;
 }
 
 .apartment-panel .apartment-code code {
-  font-size: 1.05rem;
-  letter-spacing: 0.06em;
+  font-size: 0.92rem;
+  letter-spacing: 0.02em;
   padding: 2px 6px;
   border-radius: 6px;
   background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+}
+
+.apartment-panel .invite-link {
+  display: block;
+  margin-top: 6px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  font-size: 0.82rem;
+  line-height: 1.45;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+
+.apartment-panel .invite-box {
+  margin: 10px 0;
+}
+
+.apartment-panel .invite-box-label {
+  display: block;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+  margin-bottom: 4px;
+}
+
+.apartment-members li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+
+.apartment-member-name {
+  font-weight: 600;
+  min-width: 0;
+}
+
+.apartment-member-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin-left: auto;
 }
 
 .apartment-members,
@@ -402,10 +565,19 @@ body {
 }
 
 .apartment-actions {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
   gap: 8px;
-  margin: 8px 0;
+  margin: 12px 0;
+}
+
+.apartment-actions .btn.link {
+  justify-content: center;
+  text-align: center;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
 }
 
 .cleaning-plan-list {
@@ -498,6 +670,8 @@ body {
   display: none;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   padding-bottom: 104px; /* space for floating tab bar */
   animation: fade 0.22s ease;
@@ -505,6 +679,13 @@ body {
 
 .view.is-active {
   display: flex;
+  flex-direction: column;
+}
+
+.view:not(.is-active) {
+  display: none !important;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 @keyframes fade {
@@ -515,6 +696,22 @@ body {
 }
 
 /* ---------- HOME ---------- */
+#view-home {
+  overflow: hidden;
+  min-height: 0;
+  padding-bottom: calc(112px + env(safe-area-inset-bottom, 0px));
+}
+
+.home-hero {
+  flex-shrink: 0;
+}
+
+#view-home .chat {
+  flex: 1 1 auto;
+  min-height: min(42vh, 480px);
+  margin-bottom: 4px;
+}
+
 .summary {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -640,7 +837,7 @@ body {
 }
 
 .chat {
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -651,24 +848,33 @@ body {
   overflow: hidden;
 }
 
+.chat-body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .messages {
-  flex: 1;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   padding: 16px;
   display: flex;
   flex-direction: column;
   gap: 10px;
+  -webkit-overflow-scrolling: touch;
 }
 
 .messages.is-empty {
-  flex: 0;
   min-height: 0;
   padding: 0;
-  overflow: hidden;
 }
 
 .chat-empty {
-  flex: 1;
+  position: absolute;
+  inset: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -676,6 +882,11 @@ body {
   text-align: center;
   padding: 28px 20px;
   gap: 6px;
+  pointer-events: none;
+}
+
+.chat-empty[hidden] {
+  display: none !important;
 }
 
 .chat-empty-icon {
@@ -702,9 +913,20 @@ body {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  padding: 10px 12px 12px;
+  padding: 10px 12px;
   border-top: 1px solid var(--line);
   background: var(--surface-2, var(--surface));
+  flex-shrink: 0;
+}
+
+.composer {
+  display: flex;
+  gap: 10px;
+  padding: 12px;
+  padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--line);
+  background: var(--surface-2);
+  flex-shrink: 0;
 }
 
 .quick-chip {
@@ -729,13 +951,14 @@ body {
 }
 
 .bubble {
-  max-width: 82%;
+  max-width: min(82%, 560px);
   padding: 11px 14px;
   border-radius: 16px;
   font-size: 14.5px;
-  line-height: 1.45;
+  line-height: 1.5;
   white-space: pre-wrap;
   word-wrap: break-word;
+  overflow-wrap: anywhere;
   animation: rise 0.18s ease-out;
 }
 
@@ -753,6 +976,32 @@ body {
   border-bottom-left-radius: 5px;
 }
 
+.bubble.thinking {
+  opacity: 0.75;
+  font-style: italic;
+}
+
+.bubble.thinking .who::after {
+  content: "";
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  margin-left: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: pulse-dot 1s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
 .bubble .who {
   display: block;
   font-size: 11px;
@@ -765,14 +1014,6 @@ body {
     opacity: 0;
     transform: translateY(6px);
   }
-}
-
-.composer {
-  display: flex;
-  gap: 10px;
-  padding: 12px;
-  border-top: 1px solid var(--line);
-  background: var(--surface-2);
 }
 
 .composer input {
@@ -812,7 +1053,12 @@ body {
   filter: brightness(1.05);
 }
 
-.composer button:active {
+.composer button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.composer button:active:not(:disabled) {
   transform: scale(0.97);
 }
 
@@ -2511,17 +2757,90 @@ button.kitchen-app {
 }
 
 /* ---------- HOUSEHOLD ---------- */
+.household-page {
+  width: 100%;
+  min-width: 0;
+}
+
 .household-grid {
   display: grid;
   gap: 16px;
+  width: 100%;
+  min-width: 0;
 }
 
-@media (min-width: 720px) {
-  .household-grid {
-    grid-template-columns: repeat(2, 1fr);
+.household-grid .panel {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.household-panel {
+  grid-area: household;
+}
+
+.household-people {
+  grid-area: people;
+}
+
+.household-stats {
+  grid-area: stats;
+}
+
+.household-settings {
+  grid-area: settings;
+}
+
+.household-cleaning {
+  grid-area: cleaning;
+}
+
+.household-reminders {
+  grid-area: reminders;
+}
+
+@media (min-width: 900px) {
+  .app {
+    max-width: min(1040px, calc(100vw - 48px));
+    padding: 24px 24px 0;
   }
-  .household-grid .panel-wide {
-    grid-column: 1 / -1;
+
+  .tabbar {
+    width: min(960px, calc(100% - 48px));
+  }
+
+  .household-grid {
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas:
+      "household household"
+      "people stats"
+      "settings settings"
+      "cleaning cleaning"
+      "reminders reminders";
+    gap: 18px;
+  }
+
+  .household-grid .panel h2 {
+    font-size: 1.05rem;
+  }
+
+  .profile-list {
+    grid-template-columns: 1fr;
+  }
+
+  .stats-filters {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+
+  .settings-dl {
+    grid-template-columns: max-content 1fr;
+    max-width: 560px;
+  }
+
+  .apartment-actions {
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    max-width: 100%;
   }
 }
 
@@ -2571,7 +2890,7 @@ button.kitchen-app {
 
 .panel {
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: 1px solid var(--line);
   border-radius: 16px;
   padding: 16px;
 }
@@ -2616,15 +2935,11 @@ button.kitchen-app {
 
 .settings-block p {
   margin: 6px 0;
+  overflow-wrap: anywhere;
 }
 
-@media (min-width: 760px) {
-  .household-grid {
-    grid-template-columns: 1fr 1fr;
-  }
-  .household-grid .panel:last-child {
-    grid-column: 1 / -1;
-  }
+.settings-block code {
+  word-break: break-word;
 }
 
 /* ---------- LIQUID-GLASS TAB BAR ---------- */
@@ -2685,8 +3000,49 @@ button.kitchen-app {
   .app {
     padding: 16px 14px 0;
   }
+  .home-hero {
+    margin-bottom: 2px;
+  }
+  .briefing-card {
+    padding: 10px 12px;
+    margin-bottom: 8px;
+  }
+  .briefing-title {
+    font-size: 15px;
+  }
+  .briefing-body {
+    gap: 6px;
+  }
+  .briefing-section p,
+  .briefing-section ul {
+    font-size: 13px;
+  }
   .summary {
     grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+  .stat {
+    padding: 8px 6px;
+    border-radius: 12px;
+  }
+  .stat .num {
+    font-size: 20px;
+  }
+  .stat .lbl {
+    font-size: 10px;
+    margin-top: 4px;
+  }
+  #view-home .chat {
+    min-height: min(58vh, 480px);
+  }
+  .quick-actions {
+    padding: 8px 10px 10px;
+    gap: 6px;
+  }
+  .quick-chip {
+    font-size: 12px;
+    padding: 6px 10px;
   }
   .tab {
     font-size: 9px;

@@ -32,28 +32,32 @@
       <main class="content">
         <!-- HOME / overview -->
         <section class="view is-active" id="view-home" data-title="Home">
-          <article class="briefing-card" id="briefing-card" aria-live="polite">
-            <p class="briefing-placeholder muted">Loading today…</p>
-          </article>
-          <div class="summary" id="summary"></div>
+          <div class="home-hero" id="home-hero">
+            <article class="briefing-card" id="briefing-card" aria-live="polite">
+              <p class="briefing-placeholder muted">Loading today…</p>
+            </article>
+            <div class="summary" id="summary"></div>
+          </div>
           <div class="chat">
-            <div class="messages" id="messages"></div>
-            <div class="chat-empty" id="chat-empty" hidden>
-              <p class="chat-empty-icon" aria-hidden="true">💬</p>
-              <p class="chat-empty-title">Your apartment chat is empty</p>
-              <p class="chat-empty-hint" id="chat-empty-hint">
-                Say hi, add something to your list, or use a quick action below.
-              </p>
+            <div class="chat-body">
+              <div class="messages" id="messages"></div>
+              <div class="chat-empty" id="chat-empty" hidden>
+                <p class="chat-empty-icon" aria-hidden="true">💬</p>
+                <p class="chat-empty-title">Your apartment chat is empty</p>
+                <p class="chat-empty-hint" id="chat-empty-hint">
+                  Say hi, add something to your list, or tap a quick action above.
+                </p>
+              </div>
             </div>
-            <form class="composer" id="composer" autocomplete="off">
-              <input id="input" type="text" placeholder="Ask Domus…  e.g. plan meals for this week" aria-label="Message Domus" />
-              <button type="submit" aria-label="Send">Send</button>
-            </form>
             <div class="quick-actions" id="quick-actions" role="group" aria-label="Quick actions">
               <button type="button" class="quick-chip" data-action="add-milk">🥛 Add milk</button>
               <button type="button" class="quick-chip" data-action="briefing">📋 What's on today?</button>
               <button type="button" class="quick-chip" data-action="plan-dinner">🍽 Plan dinner</button>
             </div>
+            <form class="composer" id="composer" autocomplete="off">
+              <input id="input" type="text" placeholder="Ask Domus…  e.g. plan meals for this week" aria-label="Message Domus" />
+              <button type="submit" aria-label="Send">Send</button>
+            </form>
           </div>
         </section>
 
@@ -113,36 +117,38 @@
 
         <!-- HOUSEHOLD -->
         <section class="view" id="view-household" data-title="Household">
-          <div class="household-grid">
-            <section class="panel">
-              <h2>Apartment</h2>
-              <div id="apartment-panel" class="apartment-panel">
-                <p class="empty muted">Pick a profile with an apartment to see join code and members.</p>
-              </div>
-            </section>
-            <section class="panel">
-              <h2>People</h2>
-              <div id="profiles" class="profile-list"></div>
-            </section>
-            <section class="panel">
-              <h2>Who did what (7 days)</h2>
-              <div class="stats-filters" id="stats-filters"></div>
-              <div id="stats" class="stats-list"></div>
-            </section>
-            <section class="panel">
-              <h2>Settings</h2>
-              <div id="settings" class="settings-block"></div>
-            </section>
-            <section class="panel panel-wide">
-              <h2>Shared cleaning plan</h2>
-              <p class="section-hint">Track chores, who last did them, and what's overdue for your apartment.</p>
-              <button type="button" class="btn primary" id="open-cleaning-plan">Open cleaning plan</button>
-            </section>
-            <section class="panel panel-wide">
-              <h2>Reminders</h2>
-              <p class="section-hint">Recurring schedules and pending timers — also manageable via chat.</p>
-              <div id="reminders" class="reminders-list"></div>
-            </section>
+          <div class="household-page">
+            <div class="household-grid">
+              <section class="panel household-panel">
+                <h2>Household</h2>
+                <div id="apartment-panel" class="apartment-panel">
+                  <p class="empty muted">Switch to a household entity to manage members and invites.</p>
+                </div>
+              </section>
+              <section class="panel household-people">
+                <h2>People</h2>
+                <div id="profiles" class="profile-list"></div>
+              </section>
+              <section class="panel household-stats">
+                <h2>Who did what (7 days)</h2>
+                <div class="stats-filters" id="stats-filters"></div>
+                <div id="stats" class="stats-list"></div>
+              </section>
+              <section class="panel household-settings">
+                <h2>Settings</h2>
+                <div id="settings" class="settings-block"></div>
+              </section>
+              <section class="panel household-cleaning">
+                <h2>Shared cleaning plan</h2>
+                <p class="section-hint">Track chores, who last did them, and what's overdue for your apartment.</p>
+                <button type="button" class="btn primary" id="open-cleaning-plan">Open cleaning plan</button>
+              </section>
+              <section class="panel household-reminders">
+                <h2>Reminders</h2>
+                <p class="section-hint">Recurring schedules and pending timers — also manageable via chat.</p>
+                <div id="reminders" class="reminders-list"></div>
+              </section>
+            </div>
           </div>
         </section>
 
@@ -489,29 +495,73 @@
         </button>
       </nav>
 
-      <!-- Profile picker (first launch / switch user) -->
+      <!-- Entity switcher / household auth -->
       <div class="profile-overlay" id="profile-overlay" hidden>
         <div class="profile-sheet" role="dialog" aria-modal="true" aria-labelledby="profile-sheet-title">
-          <h2 id="profile-sheet-title">Who's using Domus?</h2>
-          <p class="section-hint">Pick your profile. Each apartment gets its own chat, tasks, and reminders on this device.</p>
-          <div id="profile-pick-list" class="profile-pick-list"></div>
-          <form id="profile-new-form" class="profile-new-form" autocomplete="off">
-            <h3>New profile</h3>
-            <div class="profile-mode-row">
-              <label class="profile-mode-option">
-                <input type="radio" name="profile-mode" value="create" checked />
-                Create apartment
-              </label>
-              <label class="profile-mode-option">
-                <input type="radio" name="profile-mode" value="join" />
-                Join with code
-              </label>
+          <h2 id="profile-sheet-title">Welcome to Domus</h2>
+          <p id="profile-sheet-hint" class="section-hint">Pick who you are, or set up a household below.</p>
+
+          <section id="auth-saved-section" class="auth-section">
+            <h3 class="auth-section-title">On this device</h3>
+            <div id="profile-pick-list" class="profile-pick-list"></div>
+          </section>
+
+          <section id="auth-setup-section" class="auth-section">
+            <button type="button" id="auth-setup-toggle" class="auth-setup-toggle" hidden>
+              Add another household or device
+            </button>
+            <div id="auth-setup-body">
+              <h3 class="auth-section-title" id="auth-setup-heading">Get started</h3>
+              <div class="auth-tabs" role="tablist" aria-label="Household setup">
+                <button type="button" class="auth-tab is-active" data-mode="create" role="tab" aria-selected="true">Create</button>
+                <button type="button" class="auth-tab" data-mode="join" role="tab" aria-selected="false">Join</button>
+                <button type="button" class="auth-tab" data-mode="login" role="tab" aria-selected="false">Log in</button>
+              </div>
+              <p id="auth-mode-hint" class="auth-mode-hint section-hint"></p>
+
+              <form id="profile-new-form" class="profile-new-form" autocomplete="off">
+                <div id="auth-panel-create" class="auth-panel" data-mode="create">
+                  <label class="field-label" for="profile-new-name">Your name</label>
+                  <input id="profile-new-name" type="text" placeholder="Sebastian" autocomplete="name" />
+                  <label class="field-label" for="profile-new-apartment">Household name</label>
+                  <input id="profile-new-apartment" type="text" placeholder="Karl-Marx-Allee 5" autocomplete="organization" />
+                  <label class="field-label" for="profile-create-password">Household password</label>
+                  <input id="profile-create-password" type="password" placeholder="At least 4 characters" autocomplete="new-password" minlength="4" />
+                </div>
+
+                <div id="auth-panel-join" class="auth-panel" data-mode="join" hidden>
+                  <label class="field-label" for="profile-join-name">Your name</label>
+                  <input id="profile-join-name" type="text" placeholder="How you appear in the household" autocomplete="name" />
+                  <label class="field-label" for="profile-invite-token">Invite link or code</label>
+                  <input id="profile-invite-token" type="text" placeholder="Paste link or ?invite=… token" />
+                  <label class="field-label" for="profile-join-password">Household password</label>
+                  <input id="profile-join-password" type="password" placeholder="From your roommate / admin" autocomplete="current-password" />
+                  <p class="auth-or">or</p>
+                  <label class="field-label" for="profile-join-otp">One-time code (6 digits)</label>
+                  <input id="profile-join-otp" type="text" inputmode="numeric" placeholder="From Household tab" maxlength="6" pattern="[0-9]{6}" />
+                </div>
+
+                <div id="auth-panel-login" class="auth-panel" data-mode="login" hidden>
+                  <label class="field-label" for="profile-login-invite">Invite link or code</label>
+                  <input id="profile-login-invite" type="text" placeholder="Same link as when you first joined" />
+                  <label class="field-label" for="profile-login-member">You are</label>
+                  <select id="profile-login-member" disabled>
+                    <option value="">Enter invite link first…</option>
+                  </select>
+                  <label class="field-label" for="profile-login-password">Household password</label>
+                  <input id="profile-login-password" type="password" placeholder="Household password" autocomplete="current-password" />
+                  <p class="auth-or">or</p>
+                  <label class="field-label" for="profile-login-otp">One-time code (6 digits)</label>
+                  <input id="profile-login-otp" type="text" inputmode="numeric" placeholder="From Household tab" maxlength="6" pattern="[0-9]{6}" />
+                </div>
+
+                <button type="submit" class="btn primary auth-submit" id="auth-submit-btn">Create household</button>
+              </form>
             </div>
-            <input id="profile-new-name" type="text" placeholder="Your name" aria-label="Display name" required />
-            <input id="profile-new-apartment" type="text" placeholder="Apartment name (e.g. Karl-Marx-Allee 5)" aria-label="Apartment" />
-            <input id="profile-join-code" type="text" placeholder="13-character apartment code" aria-label="Apartment join code" maxlength="13" hidden />
-            <button type="submit" class="btn primary">Continue</button>
-          </form>
+          </section>
+          <div class="auth-footer">
+            <button type="button" class="btn link" id="auth-sign-out" hidden>Sign out on this device</button>
+          </div>
         </div>
       </div>
 

@@ -21,15 +21,12 @@ from domus.telegram_bot.scheduler import (
 
 logger = logging.getLogger(__name__)
 
+from domus.text_utils import strip_wake_word
+
 WAKE_WORD = "domus"
 WAKE_PATTERN = re.compile(rf"\b{WAKE_WORD}\b", re.IGNORECASE)
 MESSAGE_TIMEOUT_SECONDS = 45
 TELEGRAM_MESSAGE_LIMIT = 4096
-
-
-def strip_wake_word(text: str) -> str:
-    cleaned = WAKE_PATTERN.sub("", text, count=1).strip(" ,:;-")
-    return cleaned or text.strip()
 
 
 def has_wake_word(text: str) -> bool:

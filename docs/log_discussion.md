@@ -101,4 +101,22 @@ Raw logs stay local and are gitignored — only summaries and lessons go here.
 
 ---
 
+## 2026-09-06 — UI natural language verification
+
+**Verified**
+- Home tab `POST /api/message` works (rules + OpenRouter when key in `.env`)
+- `GET /api/settings` returns `openrouter_configured: true` when key present
+- Example: *"add milk to the shopping list"* → quantity merge reply
+- Example: *"what should we cook for dinner tonight"* → meal suggestions from pantry
+
+**Fixes**
+- POST routes ignored query strings (`/api/message?user_id=1` returned 404) — fixed in `ui/server.py`
+- `.env` now loaded from repo root explicitly (`domus.config`)
+- Household → Settings shows OpenRouter on/off + model
+
+**Household v2**
+- Entity auth, invite links, password `test1234` for seed KMA5 — see docs/domus_notes.txt
+
+---
+
 *Add a new dated section when we review the next log.*

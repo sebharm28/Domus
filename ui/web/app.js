@@ -9,6 +9,8 @@ const summaryEl = document.getElementById("summary");
 const briefingCard = document.getElementById("briefing-card");
 const chatEmptyEl = document.getElementById("chat-empty");
 const chatEmptyHint = document.getElementById("chat-empty-hint");
+const quickActionsEl = document.getElementById("quick-actions");
+const authSignOutBtn = document.getElementById("auth-sign-out");
 const homeApartmentEl = document.getElementById("home-apartment");
 const notesBoardEl = document.getElementById("notes-board");
 const notesNewBtn = document.getElementById("notes-new-btn");
@@ -51,7 +53,22 @@ const profilePickList = document.getElementById("profile-pick-list");
 const profileNewForm = document.getElementById("profile-new-form");
 const profileNewName = document.getElementById("profile-new-name");
 const profileNewApartment = document.getElementById("profile-new-apartment");
-const profileJoinCode = document.getElementById("profile-join-code");
+const profileCreatePassword = document.getElementById("profile-create-password");
+const profileInviteToken = document.getElementById("profile-invite-token");
+const profileJoinName = document.getElementById("profile-join-name");
+const profileJoinPassword = document.getElementById("profile-join-password");
+const profileJoinOtp = document.getElementById("profile-join-otp");
+const profileLoginInvite = document.getElementById("profile-login-invite");
+const profileLoginMember = document.getElementById("profile-login-member");
+const profileLoginPassword = document.getElementById("profile-login-password");
+const profileLoginOtp = document.getElementById("profile-login-otp");
+const authModeHint = document.getElementById("auth-mode-hint");
+const authSubmitBtn = document.getElementById("auth-submit-btn");
+const authSetupToggle = document.getElementById("auth-setup-toggle");
+const authSetupBody = document.getElementById("auth-setup-body");
+const authSavedSection = document.getElementById("auth-saved-section");
+const authTabs = document.querySelectorAll(".auth-tab");
+const authPanels = document.querySelectorAll(".auth-panel");
 const apartmentPanelEl = document.getElementById("apartment-panel");
 const statsFiltersEl = document.getElementById("stats-filters");
 const cleaningPlanListEl = document.getElementById("cleaning-plan-list");
@@ -75,7 +92,39 @@ const currentUser = {
   displayName: null,
   apartment: null,
   chatId: null,
+  sessionToken: null,
 };
+
+const SESSION_STORAGE_KEY = "domus-session-tokens";
+const ACTIVE_SESSION_KEY = "domus-active-session";
+let chatLoadGeneration = 0;
+
+function loadStoredSessionTokens() {
+  try {
+    const raw = localStorage.getItem(SESSION_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveSessionToken(token) {
+  if (!token) return;
+  const tokens = loadStoredSessionTokens();
+  if (!tokens.includes(token)) tokens.push(token);
+  localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(tokens));
+  localStorage.setItem(ACTIVE_SESSION_KEY, token);
+}
+
+function getActiveSessionToken() {
+  return localStorage.getItem(ACTIVE_SESSION_KEY) || currentUser.sessionToken;
+}
+
+function inviteLinkForToken(token) {
+  const base = `${window.location.origin}${window.location.pathname}`;
+  return `${base}?invite=${encodeURIComponent(token)}`;
+}
 
 function getUserId() {
   return currentUser.id;
@@ -92,21 +141,15 @@ function getDisplayName() {
   return currentUser.displayName || "You";
 }
 
-function loadStoredUser() {
-  const id = localStorage.getItem("domus-user-id");
-  const name = localStorage.getItem("domus-display-name");
-  const apartment = localStorage.getItem("domus-apartment");
-  if (!id || !name) return null;
-  const parsed = Number(id);
-  if (!Number.isFinite(parsed)) return null;
-  return { id: parsed, displayName: name, apartment: apartment || null };
-}
-
-function applyCurrentUser(id, displayName, apartment = null, chatId = null) {
+function applyCurrentUser(id, displayName, apartment = null, chatId = null, sessionToken = null) {
   currentUser.id = id;
   currentUser.displayName = displayName;
   currentUser.apartment = apartment;
   currentUser.chatId = chatId;
+  if (sessionToken) {
+    currentUser.sessionToken = sessionToken;
+    saveSessionToken(sessionToken);
+  }
   localStorage.setItem("domus-user-id", String(id));
   localStorage.setItem("domus-display-name", displayName);
   if (apartment) localStorage.setItem("domus-apartment", apartment);
@@ -121,6 +164,18 @@ function applyCurrentUser(id, displayName, apartment = null, chatId = null) {
   updateHomeContext();
 }
 
+function applyAuthResult(data) {
+  const profile = data.profile;
+  if (!profile || !data.session_token) throw new Error("Invalid auth response");
+  applyCurrentUser(
+    profile.id,
+    profile.display_name,
+    profile.apartment || null,
+    profile.chat_id ?? null,
+    data.session_token
+  );
+}
+
 function updateHomeContext() {
   const onHome = document.getElementById("view-home")?.classList.contains("is-active");
   const apt = currentUser.apartment;
@@ -133,22 +188,51 @@ function updateHomeContext() {
     }
   }
   if (chatEmptyHint && apt) {
-    chatEmptyHint.textContent = `No messages yet for ${apt}. Say hi, add to your list, or tap a quick action below.`;
+    chatEmptyHint.textContent = `No messages yet for ${apt}. Say hi, add to your list, or tap a quick action above.`;
   } else if (chatEmptyHint) {
     chatEmptyHint.textContent =
-      "Say hi, add something to your list, or use a quick action below.";
+      "Say hi, add something to your list, or use a quick action above.";
   }
 }
 
-function updateChatEmptyState(hasHistory) {
-  if (!chatEmptyEl) return;
-  chatEmptyEl.hidden = hasHistory;
-  messagesEl.classList.toggle("is-empty", !hasHistory);
+function syncChatEmptyState() {
+  const hasMessages = messagesEl.childElementCount > 0;
+  if (chatEmptyEl) chatEmptyEl.hidden = hasMessages;
+  messagesEl.classList.toggle("is-empty", !hasMessages);
+  if (quickActionsEl) quickActionsEl.hidden = hasMessages;
+}
+
+function clearCurrentUser() {
+  currentUser.id = null;
+  currentUser.displayName = null;
+  currentUser.apartment = null;
+  currentUser.chatId = null;
+  currentUser.sessionToken = null;
+  localStorage.removeItem("domus-user-id");
+  localStorage.removeItem("domus-display-name");
+  localStorage.removeItem("domus-apartment");
+  if (profileChip) profileChip.hidden = true;
+}
+
+function signOutOnDevice() {
+  localStorage.removeItem(SESSION_STORAGE_KEY);
+  localStorage.removeItem(ACTIVE_SESSION_KEY);
+  clearCurrentUser();
+  state.entities = [];
+  state.chatLoaded = false;
+  messagesEl.innerHTML = "";
+  syncChatEmptyState();
+  renderProfilePicker();
+  updateAuthSetupLayout();
+  openProfilePicker({ required: true });
+  toast("Signed out on this device.");
 }
 
 async function reloadSessionData() {
   if (!getUserId()) return;
+  chatLoadGeneration += 1;
   messagesEl.innerHTML = "";
+  syncChatEmptyState();
   await Promise.all([loadTodos(), loadChatHistory(), loadBriefing()]);
   updateHomeContext();
   if (state.householdLoaded) {
@@ -162,24 +246,88 @@ function isCurrentUser(who) {
   return who === getDisplayName();
 }
 
+function parseInviteToken(raw) {
+  const value = (raw || "").trim();
+  if (!value) return "";
+  try {
+    if (value.includes("://") || value.includes("?invite=")) {
+      const url = value.startsWith("http") ? new URL(value) : new URL(`http://local${value.startsWith("?") ? value : `?${value}`}`);
+      const fromQuery = url.searchParams.get("invite");
+      if (fromQuery) return fromQuery.trim().toLowerCase();
+    }
+  } catch (_) {
+    /* keep raw token */
+  }
+  return value.toLowerCase();
+}
+
+const AUTH_MODE_COPY = {
+  create: {
+    hint: "Start a new household. You become admin and member #1.",
+    submit: "Create household",
+  },
+  join: {
+    hint: "Got an invite from your roommate? Enter the link and your name.",
+    submit: "Join household",
+  },
+  login: {
+    hint: "Already a member? Log in on this phone or browser.",
+    submit: "Log in",
+  },
+};
+
+let authFormMode = "create";
+
+function setAuthFormMode(mode) {
+  authFormMode = mode;
+  authTabs.forEach((tab) => {
+    const active = tab.dataset.mode === mode;
+    tab.classList.toggle("is-active", active);
+    tab.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  authPanels.forEach((panel) => {
+    panel.hidden = panel.dataset.mode !== mode;
+  });
+  const copy = AUTH_MODE_COPY[mode] || AUTH_MODE_COPY.create;
+  if (authModeHint) authModeHint.textContent = copy.hint;
+  if (authSubmitBtn) authSubmitBtn.textContent = copy.submit;
+  if (mode === "login") syncLoginMembers();
+}
+
+function updateAuthSetupLayout() {
+  const hasEntities = (state.entities || []).length > 0;
+  if (authSavedSection) {
+    authSavedSection.hidden = !hasEntities;
+  }
+  if (authSetupToggle && authSetupBody) {
+    if (hasEntities) {
+      authSetupToggle.hidden = false;
+      const expanded = authSetupToggle.getAttribute("aria-expanded") === "true";
+      authSetupBody.hidden = !expanded;
+      authSetupToggle.textContent = expanded
+        ? "Hide setup options"
+        : "Add another household or device";
+    } else {
+      authSetupToggle.hidden = true;
+      authSetupBody.hidden = false;
+    }
+  }
+}
+
 function openProfilePicker({ required = false } = {}) {
   if (!profileOverlay) return;
   profileOverlay.hidden = false;
   profileOverlay.classList.add("is-open");
   profileOverlay.dataset.required = required ? "1" : "0";
-  renderProfilePicker();
-  refreshProfilesForPicker();
-}
-
-async function refreshProfilesForPicker() {
-  try {
-    const data = await api("/api/profiles");
-    state.profiles = data.profiles || [];
-    renderProfilePicker();
-    renderTaskAssigneeOptions();
-  } catch (_) {
-    /* keep cached list */
+  if (authSignOutBtn) {
+    authSignOutBtn.hidden = required || !getUserId();
   }
+  if (authSetupToggle) authSetupToggle.setAttribute("aria-expanded", "false");
+  renderProfilePicker();
+  refreshEntityList().then(() => {
+    updateAuthSetupLayout();
+    setAuthFormMode(authFormMode);
+  });
 }
 
 function closeProfilePicker() {
@@ -189,79 +337,129 @@ function closeProfilePicker() {
   profileOverlay.classList.remove("is-open");
 }
 
-function selectProfile(id) {
-  const profile = state.profiles.find((p) => p.id == id);
-  if (!profile) return;
+function renderProfilePicker() {
+  if (!profilePickList) return;
+  const entities = state.entities || [];
+  if (entities.length === 0) {
+    profilePickList.innerHTML = "";
+    return;
+  }
+  profilePickList.innerHTML = entities
+    .map(
+      (e) => `
+    <button type="button" class="profile-pick-btn${
+      e.session_token === getActiveSessionToken() ? " is-active" : ""
+    }" data-token="${escapeAttr(e.session_token)}">
+      <strong>${escapeHtml(e.display_name)}</strong>
+      <span class="muted">${escapeHtml(e.household_name || e.apartment || "")}</span>
+    </button>`
+    )
+    .join("");
+  updateAuthSetupLayout();
+}
+
+function selectEntity(sessionToken) {
+  const entity = (state.entities || []).find((e) => e.session_token === sessionToken);
+  if (!entity) return;
   applyCurrentUser(
-    profile.id,
-    profile.display_name,
-    profile.apartment || null,
-    profile.chat_id ?? null
+    entity.user_id,
+    entity.display_name,
+    entity.apartment || null,
+    entity.chat_id ?? null,
+    entity.session_token
   );
   closeProfilePicker();
   reloadSessionData();
 }
 
-function renderProfilePicker() {
-  if (!profilePickList) return;
-  if (state.profiles.length === 0) {
-    profilePickList.innerHTML = `<p class="empty">No profiles yet — create one below.</p>`;
+async function refreshEntityList() {
+  const tokens = loadStoredSessionTokens();
+  if (tokens.length === 0) {
+    state.entities = [];
+    renderProfilePicker();
+    updateAuthSetupLayout();
     return;
   }
-  profilePickList.innerHTML = state.profiles
-    .map(
-      (p) => `
-    <button type="button" class="profile-pick-btn${p.id == currentUser.id ? " is-active" : ""}" data-id="${p.id}">
-      <strong>${escapeHtml(p.display_name)}</strong>
-      ${p.apartment ? `<span class="muted">${escapeHtml(p.apartment)}</span>` : ""}
-    </button>`
-    )
-    .join("");
+  try {
+    const data = await api("/api/auth/entities", { session_tokens: tokens });
+    state.entities = data.entities || [];
+    const valid = new Set(state.entities.map((e) => e.session_token));
+    const pruned = tokens.filter((t) => valid.has(t));
+    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(pruned));
+    renderProfilePicker();
+  } catch (_) {
+    /* keep cached */
+  }
+  updateAuthSetupLayout();
 }
 
-async function registerProfile(displayName, { mode = "create", apartment = "", joinCode = "" } = {}) {
-  const body = { display_name: displayName, mode };
-  if (mode === "join") body.join_code = joinCode;
-  else body.apartment = apartment;
-  const data = await api("/api/profiles/register", body);
-  state.profiles = data.profiles || [];
-  renderTaskAssigneeOptions();
-  const profile = data.profile;
-  if (!profile) throw new Error("Profile not created");
-  applyCurrentUser(
-    profile.id,
-    profile.display_name,
-    profile.apartment || null,
-    profile.chat_id ?? null
-  );
+async function createHouseholdAccount(displayName, householdName, password) {
+  const data = await api("/api/auth/create-household", {
+    display_name: displayName,
+    household_name: householdName,
+    password,
+  });
+  applyAuthResult(data);
+  await refreshEntityList();
   closeProfilePicker();
-  if (data.join?.status === "pending") {
-    toast("Join request sent — waiting for an apartment owner to approve.");
-  } else if (data.apartment?.join_code) {
-    toast(`Apartment created. Share code: ${data.apartment.join_code}`);
-  }
+  toast(`Household created. Password set — share invite link from Household tab.`);
+  reloadSessionData();
+}
+
+async function joinHousehold(displayName, inviteToken, { password = "", otp = "" } = {}) {
+  const body = { display_name: displayName, invite_token: inviteToken };
+  if (password) body.password = password;
+  if (otp) body.otp = otp;
+  const data = await api("/api/auth/join", body);
+  applyAuthResult(data);
+  await refreshEntityList();
+  closeProfilePicker();
+  toast("Joined household.");
+  reloadSessionData();
+}
+
+async function loginExistingEntity(userId, inviteToken, { password = "", otp = "" } = {}) {
+  const body = { user_id: userId, invite_token: inviteToken };
+  if (password) body.password = password;
+  if (otp) body.otp = otp;
+  const data = await api("/api/auth/login", body);
+  applyAuthResult(data);
+  await refreshEntityList();
+  closeProfilePicker();
+  toast("Logged in.");
   reloadSessionData();
 }
 
 async function initProfiles() {
   try {
-    const data = await api("/api/profiles");
-    state.profiles = data.profiles || [];
-    renderTaskAssigneeOptions();
-    const stored = loadStoredUser();
-    if (stored) {
-      const profile = state.profiles.find((p) => p.id === stored.id);
-      if (profile) {
+    await refreshEntityList();
+    const active = getActiveSessionToken();
+    if (active) {
+      const entity = (state.entities || []).find((e) => e.session_token === active);
+      if (entity) {
         applyCurrentUser(
-          profile.id,
-          profile.display_name,
-          profile.apartment || stored.apartment || null,
-          profile.chat_id ?? null
+          entity.user_id,
+          entity.display_name,
+          entity.apartment || null,
+          entity.chat_id ?? null,
+          entity.session_token
         );
+        setConnected(true);
         return;
       }
+      localStorage.removeItem(ACTIVE_SESSION_KEY);
+    }
+    clearCurrentUser();
+    const params = new URLSearchParams(window.location.search);
+    const invite = params.get("invite");
+    if (invite) {
+      const token = invite.trim().toLowerCase();
+      if (profileInviteToken) profileInviteToken.value = token;
+      if (profileLoginInvite) profileLoginInvite.value = token;
+      authFormMode = "join";
     }
     openProfilePicker({ required: true });
+    setAuthFormMode(authFormMode);
     setConnected(true);
   } catch (e) {
     setConnected(false);
@@ -278,6 +476,7 @@ const state = {
   recipes: [],
   tags: [],
   profiles: [],
+  entities: [],
   settings: null,
   stats: [],
   reminders: { recurring: [], pending_timers: [], recent_timers: [] },
@@ -653,9 +852,12 @@ tabbar.querySelectorAll(".tab").forEach((tab) => {
 
 // ---- API ------------------------------------------------------------------
 async function api(path, body) {
+  const headers = {};
+  const token = getActiveSessionToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
   const opts = body
-    ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
-    : {};
+    ? { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify({ ...body, session_token: token || body.session_token }) }
+    : { headers };
   const res = await fetch(path, opts);
   const text = await res.text();
   let data = {};
@@ -839,27 +1041,30 @@ function renderBriefingCard() {
 }
 
 async function loadChatHistory() {
+  const generation = ++chatLoadGeneration;
   try {
     const data = await api(apiPath("/api/chat/history"));
+    if (generation !== chatLoadGeneration) return;
     const turns = data.history || [];
     messagesEl.innerHTML = "";
-    if (turns.length === 0) {
-      updateChatEmptyState(false);
-    } else {
-      updateChatEmptyState(true);
-      for (const turn of turns) {
-        const who =
-          turn.role === "user" ? turn.display_name || getDisplayName() : "Domus";
-        addBubble(turn.text, who);
-      }
+    for (const turn of turns) {
+      const who =
+        turn.role === "user" ? turn.display_name || getDisplayName() : "Domus";
+      appendBubble(turn.text, who);
     }
     state.chatLoaded = true;
     setConnected(true);
   } catch (e) {
-    if (!state.chatLoaded) {
-      updateChatEmptyState(false);
+    if (generation !== chatLoadGeneration) return;
+    if (!state.chatLoaded && messagesEl.childElementCount === 0) {
+      syncChatEmptyState();
     }
     setConnected(false);
+  } finally {
+    if (generation === chatLoadGeneration) {
+      syncChatEmptyState();
+      if (messagesEl.childElementCount > 0) scrollChatToBottom();
+    }
   }
 }
 
@@ -1723,59 +1928,188 @@ function renderApartmentPanel() {
   if (!apartmentPanelEl) return;
   const apt = state.apartment;
   if (!apt?.apartment) {
-    apartmentPanelEl.innerHTML = `<p class="empty muted">Pick a profile with an apartment to see join code and members.</p>`;
+    apartmentPanelEl.innerHTML = `<p class="empty muted">Switch to a household entity to manage members and invites.</p>`;
     return;
   }
-  const pending = apt.pending || [];
   const members = apt.members || [];
   const isOwner = members.some(
     (m) => m.user_id === getUserId() && m.role === "owner" && m.status === "active"
   );
+  const inviteToken = apt.invite_token || "";
+  const inviteLink = inviteToken ? inviteLinkForToken(inviteToken) : "";
   apartmentPanelEl.innerHTML = `
-    <p><strong>${escapeHtml(apt.apartment)}</strong></p>
-    <p class="apartment-code">Join code: <code>${escapeHtml(apt.join_code || "—")}</code></p>
+    <p class="household-name"><strong>${escapeHtml(apt.household_name || apt.apartment)}</strong></p>
+    ${
+      inviteLink
+        ? `<div class="invite-box">
+            <span class="invite-box-label">Invite link</span>
+            <code class="invite-link">${escapeHtml(inviteLink)}</code>
+          </div>`
+        : ""
+    }
+    <p class="apartment-code muted">Legacy join code: <code>${escapeHtml(apt.join_code || "—")}</code></p>
     <div class="apartment-actions">
-      ${isOwner ? `<button type="button" class="btn link" id="apt-regen-code">New join code</button>` : ""}
-      <button type="button" class="btn link" id="apt-leave">Leave apartment</button>
+      <button type="button" class="btn link" id="apt-copy-invite">Copy invite link</button>
+      ${isOwner ? `<button type="button" class="btn link" id="apt-regen-invite">New invite link</button>` : ""}
+      <button type="button" class="btn link" id="apt-gen-otp">Show join code (OTP)</button>
+      ${isOwner ? `<button type="button" class="btn link" id="apt-regen-code">New legacy code</button>` : ""}
+      <button type="button" class="btn link" id="apt-export">Export data</button>
+      <button type="button" class="btn link" id="apt-import">Import to new household</button>
+      <button type="button" class="btn link" id="apt-leave">Leave household</button>
     </div>
-    <p class="muted section-hint">Share the join code so roommates can request to join.</p>
+    <p class="muted section-hint">New members join with the invite link + household password or a one-time OTP.</p>
     <h3 class="apartment-subhead">Members</h3>
     <ul class="apartment-members">
       ${members
         .map(
           (m) => `
-        <li>${escapeHtml(m.display_name)} <span class="muted">${escapeHtml(m.role)}</span>
+        <li>
+          <span class="apartment-member-name">${escapeHtml(m.display_name)} <span class="muted">${escapeHtml(m.role)}</span></span>
+          <span class="apartment-member-actions">
         ${isOwner && m.role !== "owner" && m.user_id !== getUserId()
-          ? `<button type="button" class="btn link apt-kick" data-id="${m.user_id}">Remove</button>`
+          ? `<button type="button" class="btn link apt-kick" data-id="${m.user_id}">Remove</button>
+             <button type="button" class="btn link apt-transfer" data-id="${m.user_id}">Make admin</button>`
           : ""}
+        ${isOwner || m.user_id === getUserId()
+          ? `<button type="button" class="btn link apt-rename" data-id="${m.user_id}" data-name="${escapeAttr(m.display_name)}">Rename</button>`
+          : ""}
+          </span>
         </li>`
         )
         .join("")}
     </ul>
-    ${
-      isOwner && pending.length
-        ? `<h3 class="apartment-subhead">Pending approval</h3>
-      <ul class="apartment-pending">
-        ${pending
-          .map(
-            (m) => `
-          <li>${escapeHtml(m.display_name)}
-            <button type="button" class="btn primary apt-accept" data-id="${m.user_id}">Accept</button>
-          </li>`
-          )
-          .join("")}
-      </ul>`
-        : ""
-    }
   `;
-  apartmentPanelEl.querySelectorAll(".apt-accept").forEach((btn) => {
-    btn.addEventListener("click", () => acceptApartmentMember(Number(btn.dataset.id)));
+  apartmentPanelEl.querySelector("#apt-copy-invite")?.addEventListener("click", () => {
+    if (!inviteLink) return;
+    navigator.clipboard?.writeText(inviteLink);
+    toast("Invite link copied.");
   });
+  apartmentPanelEl.querySelector("#apt-regen-invite")?.addEventListener("click", regenerateInviteLink);
+  apartmentPanelEl.querySelector("#apt-gen-otp")?.addEventListener("click", generateJoinOtp);
+  apartmentPanelEl.querySelector("#apt-export")?.addEventListener("click", exportHouseholdData);
+  apartmentPanelEl.querySelector("#apt-import")?.addEventListener("click", importHouseholdData);
   apartmentPanelEl.querySelectorAll(".apt-kick").forEach((btn) => {
     btn.addEventListener("click", () => kickApartmentMember(Number(btn.dataset.id)));
   });
+  apartmentPanelEl.querySelectorAll(".apt-transfer").forEach((btn) => {
+    btn.addEventListener("click", () => transferAdmin(Number(btn.dataset.id)));
+  });
+  apartmentPanelEl.querySelectorAll(".apt-rename").forEach((btn) => {
+    btn.addEventListener("click", () =>
+      renameMember(Number(btn.dataset.id), btn.dataset.name || "")
+    );
+  });
   apartmentPanelEl.querySelector("#apt-regen-code")?.addEventListener("click", regenerateJoinCode);
   apartmentPanelEl.querySelector("#apt-leave")?.addEventListener("click", leaveApartment);
+}
+
+async function regenerateInviteLink() {
+  if (!window.confirm("Generate a new invite link? Old links will stop working.")) return;
+  try {
+    const data = await api(apiPath("/api/household/regenerate-invite"), {});
+    state.apartment = { ...state.apartment, ...data };
+    renderApartmentPanel();
+    toast("New invite link generated.");
+    setConnected(true);
+  } catch (e) {
+    toast(e.message || "Could not regenerate invite link.");
+  }
+}
+
+async function generateJoinOtp() {
+  try {
+    const data = await api(apiPath("/api/household/generate-otp"), {});
+    toast(`Join code: ${data.code} (valid ${data.ttl_minutes} min)`);
+  } catch (e) {
+    toast(e.message || "Could not generate code.");
+  }
+}
+
+async function exportHouseholdData() {
+  const anonymize = window.confirm(
+    "Anonymize names in history (who did what)?\n\nOK = anonymize ex-partners etc.\nCancel = keep original names."
+  );
+  try {
+    const path = apiPath(`/api/household/export?anonymize=${anonymize ? "1" : "0"}`);
+    const data = await api(path);
+    const blob = new Blob([JSON.stringify(data.export, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `domus-export-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast(anonymize ? "Exported (anonymized)." : "Exported.");
+  } catch (e) {
+    toast(e.message || "Export failed.");
+  }
+}
+
+async function importHouseholdData() {
+  const fileInput = document.createElement("input");
+  fileInput.type = "file";
+  fileInput.accept = "application/json,.json";
+  fileInput.onchange = async () => {
+    const file = fileInput.files?.[0];
+    if (!file) return;
+    const adminName = window.prompt("Your name in the new household:", getDisplayName());
+    if (!adminName) return;
+    const password = window.prompt("Password for the new household (min 4 chars):");
+    if (!password || password.length < 4) {
+      toast("Password required (min 4 characters).");
+      return;
+    }
+    const newName = window.prompt("New household name (leave empty to keep exported name):") || "";
+    try {
+      const text = await file.text();
+      const bundle = JSON.parse(text);
+      const data = await api("/api/household/import", {
+        export: bundle,
+        display_name: adminName,
+        password,
+        household_name: newName || undefined,
+      });
+      applyAuthResult(data);
+      await refreshEntityList();
+      toast("Imported into new household.");
+      reloadSessionData();
+    } catch (e) {
+      toast(e.message || "Import failed.");
+    }
+  };
+  fileInput.click();
+}
+
+async function transferAdmin(memberId) {
+  if (!window.confirm("Transfer admin role to this member?")) return;
+  try {
+    const data = await api(apiPath("/api/household/transfer-admin"), { member_id: memberId });
+    state.apartment = { ...state.apartment, ...data };
+    renderApartmentPanel();
+    toast("Admin transferred.");
+  } catch (e) {
+    toast(e.message || "Could not transfer admin.");
+  }
+}
+
+async function renameMember(memberId, currentName) {
+  const newName = window.prompt("New name:", currentName);
+  if (!newName || newName.trim() === currentName) return;
+  try {
+    const data = await api(apiPath("/api/household/rename-member"), {
+      member_id: memberId,
+      display_name: newName.trim(),
+    });
+    state.apartment = { ...state.apartment, ...data };
+    if (memberId === getUserId()) {
+      applyCurrentUser(getUserId(), newName.trim(), currentUser.apartment, currentUser.chatId, getActiveSessionToken());
+    }
+    renderApartmentPanel();
+    renderProfiles();
+    toast("Renamed.");
+  } catch (e) {
+    toast(e.message || "Could not rename.");
+  }
 }
 
 async function regenerateJoinCode() {
@@ -1850,7 +2184,13 @@ async function saveProfileEditor(profileId) {
     state.profiles = data.profiles || [];
     const profile = data.profile;
     if (profile && profile.id === currentUser.id) {
-      applyCurrentUser(profile.id, profile.display_name, profile.apartment, profile.chat_id);
+      applyCurrentUser(
+        profile.id,
+        profile.display_name,
+        profile.apartment,
+        profile.chat_id,
+        getActiveSessionToken()
+      );
     }
     closeModal();
     renderHousehold();
@@ -1913,8 +2253,9 @@ function renderStatsPanel() {
 
 function renderStatsFilters() {
   if (!statsFiltersEl) return;
-  const apartments = [...new Set(state.profiles.map((p) => p.apartment).filter(Boolean))];
-  const personOptions = state.profiles
+  const profiles = householdProfiles();
+  const apartments = [...new Set(profiles.map((p) => p.apartment).filter(Boolean))];
+  const personOptions = profiles
     .map(
       (p) =>
         `<option value="${p.id}"${String(state.statsFilterPerson) === String(p.id) ? " selected" : ""}>${escapeHtml(p.display_name)}</option>`
@@ -1953,15 +2294,32 @@ function renderStatsFilters() {
   });
 }
 
+function householdProfiles() {
+  const apt = currentUser.apartment;
+  const memberIds = new Set(
+    (state.apartment?.members || [])
+      .filter((m) => m.status === "active")
+      .map((m) => m.user_id)
+  );
+  if (apt && memberIds.size > 0) {
+    return state.profiles.filter((p) => memberIds.has(p.id));
+  }
+  if (apt) {
+    return state.profiles.filter((p) => p.apartment === apt);
+  }
+  return state.profiles;
+}
+
 function renderHousehold() {
   if (!profilesEl) return;
 
   renderApartmentPanel();
 
-  if (state.profiles.length === 0) {
-    profilesEl.innerHTML = `<p class="empty">No profiles yet — create one from the profile menu.</p>`;
+  const profiles = householdProfiles();
+  if (profiles.length === 0) {
+    profilesEl.innerHTML = `<p class="empty">No household members yet.</p>`;
   } else {
-    profilesEl.innerHTML = state.profiles
+    profilesEl.innerHTML = profiles
       .map(
         (p) => `
       <article class="profile-card${p.id === currentUser.id ? " is-you" : ""}">
@@ -1995,8 +2353,9 @@ function renderHousehold() {
       <dt>Evening summary</dt><dd>${cfg.evening_briefing_hour ?? 20}:00 daily</dd>
       <dt>Quiet hours</dt><dd>${cfg.quiet_hours_enabled ? `${cfg.quiet_hours_start}:00 – ${cfg.quiet_hours_end}:00` : "Off"}</dd>
       <dt>Redaction before LLM</dt><dd>${cfg.redaction_enabled ? "On" : "Off"}</dd>
+      <dt>OpenRouter (smarter chat)</dt><dd>${cfg.openrouter_configured ? `On — ${escapeHtml(cfg.openrouter_model || "default model")}` : "Off — rules only"}</dd>
     </dl>
-    <p class="muted section-hint">Read-only here. Change via .env: BRIEFING_HOUR, EVENING_BRIEFING_HOUR, QUIET_HOURS_*</p>
+    <p class="muted section-hint">Briefing/quiet hours: edit <code>.env</code> in the repo root and restart <code>ui/server.py</code>. Add <code>OPENROUTER_API_KEY</code> from <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">openrouter.ai/keys</a> for natural-language parsing beyond built-in rules.</p>
   `;
 
   renderReminders();
@@ -2562,8 +2921,17 @@ function escapeAttr(str) {
 }
 
 // ---- actions --------------------------------------------------------------
-function addBubble(text, who) {
-  updateChatEmptyState(true);
+function scrollChatToBottom() {
+  requestAnimationFrame(() => {
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    const last = messagesEl.lastElementChild;
+    if (last) {
+      last.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  });
+}
+
+function appendBubble(text, who) {
   const bubble = document.createElement("div");
   bubble.className = `bubble ${isCurrentUser(who) ? "user" : "domus"}`;
   const label = document.createElement("span");
@@ -2572,7 +2940,29 @@ function addBubble(text, who) {
   bubble.appendChild(label);
   bubble.appendChild(document.createTextNode(text));
   messagesEl.appendChild(bubble);
-  messagesEl.scrollTop = messagesEl.scrollHeight;
+  return bubble;
+}
+
+function addBubble(text, who) {
+  const bubble = appendBubble(text, who);
+  syncChatEmptyState();
+  scrollChatToBottom();
+  return bubble;
+}
+
+function addThinkingBubble() {
+  const bubble = document.createElement("div");
+  bubble.className = "bubble domus thinking";
+  bubble.setAttribute("aria-live", "polite");
+  const label = document.createElement("span");
+  label.className = "who";
+  label.textContent = "Domus";
+  bubble.appendChild(label);
+  bubble.appendChild(document.createTextNode("Thinking…"));
+  messagesEl.appendChild(bubble);
+  syncChatEmptyState();
+  scrollChatToBottom();
+  return bubble;
 }
 
 async function sendMessage(text) {
@@ -2580,14 +2970,25 @@ async function sendMessage(text) {
     openProfilePicker({ required: true });
     return;
   }
+  if (composer.dataset.sending === "1") return;
+  composer.dataset.sending = "1";
+  const sendBtn = composer.querySelector('button[type="submit"]');
+  if (sendBtn) sendBtn.disabled = true;
   addBubble(text, getDisplayName());
+  const thinking = addThinkingBubble();
   try {
     const data = await api("/api/message", {
       text,
       user: getDisplayName(),
       user_id: getUserId(),
     });
-    if (data.reply) addBubble(data.reply, "Domus");
+    thinking.remove();
+    const reply = (data.reply || "").trim();
+    if (reply) {
+      addBubble(reply, "Domus");
+    } else {
+      addBubble("I heard you, but I don't have a reply right now. Try again in a moment.", "Domus");
+    }
     if (data.todos) {
       applyTodosData(data);
       renderTodos();
@@ -2599,8 +3000,13 @@ async function sendMessage(text) {
     loadBriefing();
     setConnected(true);
   } catch (e) {
-    addBubble("I couldn't reach the Domus backend.", "Domus");
+    thinking.remove();
+    addBubble(`I couldn't reach Domus. ${e.message || "Check that the server is running."}`, "Domus");
     setConnected(false);
+  } finally {
+    composer.dataset.sending = "0";
+    if (sendBtn) sendBtn.disabled = false;
+    input.focus();
   }
 }
 
@@ -2783,62 +3189,159 @@ function setConnected(ok) {
 }
 
 // ---- form wiring ----------------------------------------------------------
+async function syncLoginMembers() {
+  if (!profileLoginMember || !profileLoginInvite) return;
+  const token = parseInviteToken(profileLoginInvite.value);
+  if (!token) {
+    profileLoginMember.innerHTML = `<option value="">Enter invite link first…</option>`;
+    profileLoginMember.disabled = true;
+    return;
+  }
+  profileLoginMember.disabled = true;
+  profileLoginMember.innerHTML = `<option value="">Loading members…</option>`;
+  try {
+    const data = await api(`/api/auth/invite?token=${encodeURIComponent(token)}`);
+    const members = data.members || [];
+    if (!members.length) {
+      profileLoginMember.innerHTML = `<option value="">No members found</option>`;
+      return;
+    }
+    profileLoginMember.innerHTML = members
+      .map((m) => `<option value="${m.user_id}">${escapeHtml(m.display_name)}</option>`)
+      .join("");
+    profileLoginMember.disabled = false;
+  } catch (_) {
+    profileLoginMember.innerHTML = `<option value="">Invalid invite link</option>`;
+  }
+}
+
+function readJoinAuth() {
+  const password = profileJoinPassword?.value.trim() || "";
+  const otp = profileJoinOtp?.value.trim() || "";
+  return { password, otp };
+}
+
+function readLoginAuth() {
+  const password = profileLoginPassword?.value.trim() || "";
+  const otp = profileLoginOtp?.value.trim() || "";
+  return { password, otp };
+}
+
 if (profileChip) {
   profileChip.addEventListener("click", () => openProfilePicker({ required: false }));
 }
 
-if (profilePickList) {
-  profilePickList.addEventListener("click", (e) => {
-    const btn = e.target.closest(".profile-pick-btn");
-    if (!btn) return;
-    selectProfile(Number(btn.dataset.id));
+authSignOutBtn?.addEventListener("click", () => {
+  if (window.confirm("Sign out on this device? You can log in again from the welcome screen.")) {
+    signOutOnDevice();
+  }
+});
+
+if (authSetupToggle && authSetupBody) {
+  authSetupToggle.addEventListener("click", () => {
+    const expanded = authSetupToggle.getAttribute("aria-expanded") === "true";
+    authSetupToggle.setAttribute("aria-expanded", expanded ? "false" : "true");
+    updateAuthSetupLayout();
   });
 }
 
-if (profileNewForm) {
-  profileNewForm.querySelectorAll('input[name="profile-mode"]').forEach((radio) => {
-    radio.addEventListener("change", () => {
-      const join = radio.value === "join" && radio.checked;
-      if (profileNewApartment) profileNewApartment.hidden = join;
-      if (profileJoinCode) profileJoinCode.hidden = !join;
-    });
-  });
+authTabs.forEach((tab) => {
+  tab.addEventListener("click", () => setAuthFormMode(tab.dataset.mode || "create"));
+});
 
+if (profilePickList) {
+  profilePickList.addEventListener("click", (e) => {
+    const btn = e.target.closest(".profile-pick-btn");
+    if (!btn?.dataset.token) return;
+    selectEntity(btn.dataset.token);
+  });
+}
+
+let loginMemberTimer;
+profileLoginInvite?.addEventListener("input", () => {
+  clearTimeout(loginMemberTimer);
+  loginMemberTimer = setTimeout(syncLoginMembers, 350);
+});
+
+profileInviteToken?.addEventListener("blur", () => {
+  const parsed = parseInviteToken(profileInviteToken.value);
+  if (parsed && profileInviteToken.value !== parsed) profileInviteToken.value = parsed;
+});
+
+profileLoginInvite?.addEventListener("blur", () => {
+  const parsed = parseInviteToken(profileLoginInvite.value);
+  if (parsed && profileLoginInvite.value !== parsed) profileLoginInvite.value = parsed;
+  syncLoginMembers();
+});
+
+if (profileNewForm) {
   profileNewForm.addEventListener("submit", async (e) => {
     e.preventDefault();
-    const name = profileNewName.value.trim();
-    const mode =
-      profileNewForm.querySelector('input[name="profile-mode"]:checked')?.value || "create";
-    if (!name) {
-      toast("Name is required.");
-      return;
-    }
+    const mode = authFormMode;
     try {
       if (mode === "join") {
-        const joinCode = profileJoinCode?.value.trim() || "";
-        if (!joinCode) {
-          toast("Apartment code is required.");
+        const name = profileJoinName?.value.trim() || "";
+        const inviteToken = parseInviteToken(profileInviteToken?.value || "");
+        const { password, otp } = readJoinAuth();
+        if (!name) {
+          toast("Your name is required.");
           return;
         }
-        await registerProfile(name, { mode: "join", joinCode });
-        profileJoinCode.value = "";
+        if (!inviteToken) {
+          toast("Paste the invite link or code.");
+          return;
+        }
+        if (!password && !otp) {
+          toast("Enter the household password or a one-time code.");
+          return;
+        }
+        await joinHousehold(name, inviteToken, { password, otp });
+        profileJoinName.value = "";
+        profileInviteToken.value = "";
+        if (profileJoinPassword) profileJoinPassword.value = "";
+        if (profileJoinOtp) profileJoinOtp.value = "";
+      } else if (mode === "login") {
+        const inviteToken = parseInviteToken(profileLoginInvite?.value || "");
+        const userId = Number(profileLoginMember?.value);
+        const { password, otp } = readLoginAuth();
+        if (!inviteToken || !Number.isFinite(userId)) {
+          toast("Pick your name after entering the invite link.");
+          return;
+        }
+        if (!password && !otp) {
+          toast("Enter the household password or a one-time code.");
+          return;
+        }
+        await loginExistingEntity(userId, inviteToken, { password, otp });
+        if (profileLoginInvite) profileLoginInvite.value = "";
+        if (profileLoginPassword) profileLoginPassword.value = "";
+        if (profileLoginOtp) profileLoginOtp.value = "";
       } else {
-        const apartment = profileNewApartment.value.trim();
-        if (!apartment) {
-          toast("Apartment name is required.");
+        const name = profileNewName?.value.trim() || "";
+        const householdName = profileNewApartment?.value.trim() || "";
+        const password = profileCreatePassword?.value.trim() || "";
+        if (!name || !householdName) {
+          toast("Name and household name are required.");
           return;
         }
-        await registerProfile(name, { mode: "create", apartment });
+        if (password.length < 4) {
+          toast("Choose a household password (min 4 characters).");
+          return;
+        }
+        await createHouseholdAccount(name, householdName, password);
+        profileNewName.value = "";
         profileNewApartment.value = "";
+        if (profileCreatePassword) profileCreatePassword.value = "";
       }
-      profileNewName.value = "";
       setConnected(true);
     } catch (err) {
-      toast(err.message || "Could not create profile.");
+      toast(err.message || "Could not continue.");
       setConnected(false);
     }
   });
 }
+
+setAuthFormMode("create");
 
 composer.addEventListener("submit", (e) => {
   e.preventDefault();

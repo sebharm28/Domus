@@ -12,12 +12,13 @@ from domus.config import Settings
 from domus.dates import parse_category_hint, parse_due_date, extract_due_date_from_message, parse_apartment_hint, parse_assignee_hint
 from domus.german import normalize_german_input
 from domus.redaction import redact_for_llm
+from domus.memory import build_openrouter_context
 from domus.natural_language import try_parse_natural_add
 from domus.meals import _extract_missing_meal_query, normalize_plan_meal_name, parse_add_recipe_phrase
 from domus.recurrence import parse_reminder_phrase
 from domus.relative_reminders import parse_relative_reminder_phrase
 from domus.structured_add import try_parse_structured_add
-from domus.text_utils import sanitize_command
+from domus.text_utils import normalize_assistant_message, sanitize_command
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +148,9 @@ Rules:
 
 Natural language examples:
 "hello" -> {"intents":[{"intent":"greeting","item":null,"due_date":null,"category":null,"recurrence":null}]}
+"Hi Domus!" -> {"intents":[{"intent":"greeting","item":null,"due_date":null,"category":null,"recurrence":null}]}
+"thanks Domus" -> {"intents":[{"intent":"thanks","item":null,"due_date":null,"category":null,"recurrence":null}]}
+"add milk" -> {"intents":[{"intent":"add_todo","item":"milk","due_date":null,"category":"shopping","recurrence":null}]}
 "add pay rent by friday category admin" -> {"intents":[{"intent":"add_todo","item":"pay rent","due_date":"YYYY-MM-DD","category":"admin","recurrence":null}]}
 "I said the task is for tomorrow" -> {"intents":[{"intent":"update_todo","item":null,"due_date":"YYYY-MM-DD","category":null,"recurrence":null}]}
 "I have a todo untill tomorrow where I have to do a power bi report for work" -> {"intents":[{"intent":"add_todo","item":"power bi report","due_date":"YYYY-MM-DD","category":"personal"}]}
@@ -175,6 +179,26 @@ def _looks_like_add_message(normalized: str) -> bool:
         )
         or re.search(r"\bwe need\s+", normalized)
     )
+
+
+def _parse_social_intents(text: str) -> list[Intent] | None:
+    normalized = text.strip().lower().rstrip(".!?")
+    if re.match(
+        r"^(?:hi|hello|hey|yo|good (?:morning|evening|night)|"
+        r"guten (?:tag|morgen|abend)|moin|servus|howdy)"
+        r"(?: there)?(?:,?\s*domus)?[!.,?\s]*$",
+        normalized,
+    ):
+        return [Intent(name="greeting")]
+    if re.match(
+        r"^(?:thanks?|thank you|thx|danke(?: schön| dir)?|vielen dank)"
+        r"(?:,?\s*domus)?[!.,?\s]*$",
+        normalized,
+    ):
+        return [Intent(name="thanks")]
+    if re.search(r"\b(help|what can you do)\b", normalized):
+        return [Intent(name="help")]
+    return None
 
 
 def _parse_correction_intents(text: str) -> list[Intent] | None:
@@ -400,6 +424,7 @@ def _finalize_add_intents(intents: list[Intent]) -> list[Intent]:
 
 def _rules_resolve(text: str) -> list[Intent]:
     for parser in (
+        _parse_social_intents,
         _parse_correction_intents,
         _parse_edit_intents,
         _parse_profile_intents,
@@ -425,7 +450,7 @@ async def parse_intents(
     chat_id: int | None = None,
     user_id: int | None = None,
 ) -> list[Intent]:
-    normalized_text = normalize_german_input(sanitize_command(text))
+    normalized_text = normalize_german_input(normalize_assistant_message(text))
     rule_intents = _rules_resolve(normalized_text)
     if _has_actionable_intent(rule_intents):
         logger.info("Rules parsed %d intent(s) for %r", len(rule_intents), text)
@@ -649,20 +674,18 @@ def _parse_clear_intents(normalized: str) -> list[Intent] | None:
 
 
 def _parse_clause_intents(normalized: str) -> list[Intent]:
-    if re.match(
-        r"^(?:hi|hello|hey|good (?:morning|evening|night)|guten (?:tag|morgen|abend)|moin|servus)(?: there)?[!.,]*$",
-        normalized,
-    ):
-        return [Intent(name="greeting")]
+    social = _parse_social_intents(normalized)
+    if social:
+        return social
 
-    if re.match(
-        r"^(?:thanks?|thank you|thx|danke(?: schön| dir)?|vielen dank)[!.,]*$",
-        normalized,
-    ):
-        return [Intent(name="thanks")]
-
-    if re.search(r"\b(help|what can you do)\b", normalized):
-        return [Intent(name="help")]
+    short_add = re.match(r"^(?:add|get|buy)\s+(.+)$", normalized)
+    if short_add:
+        item = short_add.group(1).strip()
+        if item and not re.search(
+            r"\b(?:by|before|until|category|task|todo|remind|to the|on the|from the)\b",
+            item,
+        ):
+            return [_build_add_intent(item, default_category="shopping")]
 
     relative = parse_relative_reminder_phrase(normalized)
     if relative:

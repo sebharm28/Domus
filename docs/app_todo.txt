@@ -7,7 +7,7 @@ close something. Keep this file plain text so it's easy to edit from anywhere.
 Companion docs: docs/features.txt (catalog), docs/domus_notes.txt (backlog detail),
 docs/mobile_app_discussion.txt (Pi / PWA / native strategy).
 
-Last updated: 2026-08-30
+Last updated: 2026-09-06
 
 
 DONE
@@ -48,13 +48,18 @@ DONE
 [x] Feature catalog — docs/features.txt                                         # 2026-08-30
 
 
+[x] Household v2 auth — invite link, password/OTP, entity switcher, export/import     # 2026-09-06
+[x] OpenRouter status in Household → Settings; .env loaded from repo root              # 2026-09-06
+[x] Fix POST /api/message 404 when URL had ?user_id= query string                      # 2026-09-06
+
+
 IN PROGRESS — UI DEEP DIVE (Aug 2026)
 -------------------------------------
 [~] Overall UI polish and information architecture (hub model, navigation, copy)
 [x] Kitchen hub — recipe book, unit converter, sticky notes, egg timer, meal planner   # 2026-08-30
 [x] Bath hub — shower/toothbrush timers + cleaning, towels, medicine sub-apps            # 2026-08-30
 [x] Home tab — briefing card, quick-action chips, empty state, apartment in header       # 2026-08-30
-[~] Profile / apartment UX — onboarding second user, roommate at other address
+[x] Profile / apartment UX — household v2 (entity switcher, invite, OTP login)           # 2026-09-06
 
 
 NEXT / SHORT TERM — BY SCREEN
@@ -96,10 +101,12 @@ Bath (hub + sub-apps)
 
 Household
 [x] Profile create / join — apartment join code (13 chars), owner accept/kick           # 2026-08-30
+[x] Household v2 — invite link, password/OTP join, entity switcher, export/import       # 2026-09-06
 [x] Edit profile fields in UI — diet, allergies, likes, dislikes                        # 2026-08-31
 [x] Invite flow polish — leave apartment, regenerate join code, pending badge on tab      # 2026-08-31
+[x] Admin: transfer admin, rename/remove members, regenerate invite link                  # 2026-09-06
 [x] Stats: filter by person and by apartment                                            # 2026-08-31
-[x] Settings: expose quiet hours, briefing times (read-only)                              # 2026-08-31
+[x] Settings: briefing, quiet hours, OpenRouter status (read-only from .env)              # 2026-09-06
 [x] Shared cleaning plan sub-app — chores, assign, who did what, overdue hints           # 2026-08-31
 [x] Database schema documented — docs/domus_notes.txt DATABASES section                   # 2026-08-30
 [x] Meal plans scoped per apartment + 6-week retention                                  # 2026-08-30
@@ -110,11 +117,15 @@ Cross-cutting UI
 [ ] Loading and error states on all API-driven panels
 [ ] Toast copy audit (German later — keep English for now)
 [ ] Mobile viewport pass (safe areas, tab bar, composer keyboard)
+[ ] Different color schemes? Blue, red/rosa (currently), orange/green?
 
 
 BACKEND / API (supports UI work)
 --------------------------------
 [x] Fix profile registration — import domus.db in ui/server.py                          # 2026-08-30
+[x] Household auth v2 — src/domus/household_auth.py, wave 8 migration                   # 2026-09-06
+[x] POST route matching ignores query string (?user_id= no longer breaks POST)            # 2026-09-06
+[x] GET /api/settings includes openrouter_configured + openrouter_model                 # 2026-09-06
 [x] Apartment join code + membership — /api/apartment, accept, kick, leave, regen-code  # 2026-08-31
 [x] POST /api/profiles/update — diet, allergies, likes, dislikes                        # 2026-08-31
 [x] GET /api/stats?person=&apartment= — filtered completion stats                         # 2026-08-31
@@ -129,7 +140,7 @@ FUTURE / BIGGER
 [ ] macOS desktop app — wrap ui/web in Tauri (preferred) or Electron
 [ ] Android/iOS app — React Native (Expo) or Flutter over the same HTTP API
 [ ] Pi home server + Tailscale (see docs/mobile_app_discussion.txt)
-[ ] Auth beyond local prototype (today: trust the LAN / device)
+[ ] Auth beyond local prototype — v2 sessions exist; HTTPS + proper accounts for internet
 [ ] Real-time updates (websocket/SSE) so all clients refresh live
 [ ] Move off Telegram entirely once the apps are ready (keep bot as one adapter)
 [ ] German UI replies (Phase B i18n — input normalization exists)
@@ -153,7 +164,9 @@ DECISIONS (recent — for UI design)
 - Product surface = web UI first; Telegram = NLP test harness only.
 - Bring! sync = deprecated; own shopping UI is canonical.
 - Each apartment = separate chat session (chat_id ≥ 100 in UI DB).
-- Profile requires apartment on create; first real user: Sebastian @ Karl-Marx-Allee 5.
+- Household v2: entity switcher, invite link + password/OTP (see docs/domus_notes.txt).
+- Default seed: Sebastian @ Karl-Marx-Allee 5, password test1234.
+- OpenRouter: optional; rules work without key; add OPENROUTER_API_KEY to .env for smarter chat.
 - Recipes live under Kitchen, not a top-level tab.
 - Hub model: Kitchen and Bath are app launchers; timers are full-screen sub-views.
 - Kitchen notes: shared sticky-note board per apartment (SQLite), markdown + @mentions.
@@ -166,10 +179,13 @@ DECISIONS (recent — for UI design)
 NOTES
 -----
 - Core brain:     src/domus/core.py
+- Household auth: src/domus/household_auth.py
 - Apartments:     src/domus/households.py
 - Telegram:       src/domus/telegram_bot/
 - UI prototype:   ui/  (server.py + web/)
-- Feature list:     docs/features.txt
+- Feature list:   docs/features.txt
 - Run the bot:    PYTHONPATH=src python -m domus
 - Run the UI:     PYTHONPATH=src python ui/server.py  →  http://127.0.0.1:8765
-- UI database:    data/domus_ui.db  (separate from bot's data/domus.db)
+- UI database:    data/domus_ui.db  (DOMUS_UI_DB env var)
+- OpenRouter:     OPENROUTER_API_KEY in repo-root .env — restart server after changes
+- NLP in UI:      Home tab → POST /api/message; check Household → Settings for LLM status

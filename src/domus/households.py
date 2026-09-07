@@ -462,7 +462,7 @@ def members_payload(db_path: Path, apartment: str) -> dict:
 
 
 def leave_apartment(db_path: Path, user_id: int) -> dict:
-    """Member leaves apartment; owners must transfer ownership first."""
+    """Member leaves apartment; owners transfer admin or auto-promote sole co-member."""
     apartment = apartment_for_user(db_path, user_id)
     if not apartment:
         raise ValueError("You are not in an apartment")
@@ -479,13 +479,24 @@ def leave_apartment(db_path: Path, user_id: int) -> dict:
         if row["role"] == ROLE_OWNER:
             others = conn.execute(
                 """
-                SELECT COUNT(*) AS c FROM apartment_members
+                SELECT user_id FROM apartment_members
                 WHERE apartment_label = ? AND status = ? AND user_id != ?
+                ORDER BY joined_at ASC
                 """,
                 (apartment, MEMBER_ACTIVE, user_id),
-            ).fetchone()["c"]
-            if others > 0:
-                raise ValueError("Transfer ownership before leaving (remove other members first)")
+            ).fetchall()
+            if len(others) > 1:
+                raise ValueError("Transfer admin before leaving (multiple members remain)")
+            if len(others) == 1:
+                new_admin = int(others[0]["user_id"])
+                conn.execute(
+                    "UPDATE apartment_members SET role = ? WHERE apartment_label = ? AND user_id = ?",
+                    (ROLE_OWNER, apartment, new_admin),
+                )
+                conn.execute(
+                    "UPDATE apartments SET created_by_user_id = ? WHERE label = ?",
+                    (new_admin, apartment),
+                )
         conn.execute(
             """
             UPDATE apartment_members SET status = ?
@@ -494,6 +505,12 @@ def leave_apartment(db_path: Path, user_id: int) -> dict:
             (MEMBER_REMOVED, apartment, user_id),
         )
     db.update_user_profile(db_path, user_id, apartment="")
+    try:
+        from domus.household_auth import revoke_sessions_for_member
+
+        revoke_sessions_for_member(db_path, user_id, apartment)
+    except ImportError:
+        pass
     return {"left": apartment, "apartment": None}
 
 

@@ -2,6 +2,15 @@ import json
 from pathlib import Path
 
 from domus import db
+from domus.conversation_log import ConversationLog
+
+_file_log: ConversationLog | None = None
+
+
+def set_file_log(log: ConversationLog | None) -> None:
+    """Attach a session log file (used by ui/server.py during testing)."""
+    global _file_log
+    _file_log = log
 
 
 def record_exchange(
@@ -13,6 +22,7 @@ def record_exchange(
     assistant_text: str,
     intents: list | None = None,
     private_mode: bool = False,
+    display_name: str | None = None,
 ) -> None:
     """Persist a user/assistant turn for long-term context."""
     if private_mode:
@@ -44,6 +54,18 @@ def record_exchange(
         role="assistant",
         text=assistant_text,
     )
+    if _file_log is not None:
+        profile = db.get_user_profile(db_path, user_id) if user_id is not None else None
+        name = display_name or (profile.display_name if profile else None) or "You"
+        apartment = profile.apartment if profile else None
+        _file_log.log_exchange(
+            name,
+            user_text,
+            assistant_text,
+            apartment=apartment,
+            chat_id=chat_id,
+            intents_json=intent_json,
+        )
 
 
 def remember_user_fact(
