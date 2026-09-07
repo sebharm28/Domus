@@ -49,15 +49,17 @@
                 </p>
               </div>
             </div>
-            <div class="quick-actions" id="quick-actions" role="group" aria-label="Quick actions">
-              <button type="button" class="quick-chip" data-action="add-milk">🥛 Add milk</button>
-              <button type="button" class="quick-chip" data-action="briefing">📋 What's on today?</button>
-              <button type="button" class="quick-chip" data-action="plan-dinner">🍽 Plan dinner</button>
+            <div class="chat-footer">
+              <div class="quick-actions" id="quick-actions" role="group" aria-label="Quick actions">
+                <button type="button" class="quick-chip" data-action="add-milk">🥛 Add milk</button>
+                <button type="button" class="quick-chip" data-action="briefing">📋 What's on today?</button>
+                <button type="button" class="quick-chip" data-action="plan-dinner">🍽 Plan dinner</button>
+              </div>
+              <form class="composer" id="composer" autocomplete="off">
+                <input id="input" type="text" placeholder="Ask Domus…  e.g. plan meals for this week" aria-label="Message Domus" />
+                <button type="submit" aria-label="Send">Send</button>
+              </form>
             </div>
-            <form class="composer" id="composer" autocomplete="off">
-              <input id="input" type="text" placeholder="Ask Domus…  e.g. plan meals for this week" aria-label="Message Domus" />
-              <button type="submit" aria-label="Send">Send</button>
-            </form>
           </div>
         </section>
 
